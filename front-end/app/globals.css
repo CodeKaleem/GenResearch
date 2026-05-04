@@ -1,0 +1,19 @@
+/* GenResearch — Global Reset & Base Styles */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+  height: 100%;
+}
+
+body {
+  background: #f5f0e8;
+  color: #2c1f0e;
+  font-family: 'Crimson Pro', Georgia, serif;
+  overflow-x: hidden;
+  min-height: 100%;
+}
