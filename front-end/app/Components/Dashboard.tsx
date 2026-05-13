@@ -1,6 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import UploadPapers from "./UploadPapers";
+import MyPapers from "./MyPapers";
+import Agents from "./Agents";
+import Results from "./Results";
+import Citations from "./Citations";
+import Library from "./Library";
+import Settings from "./Settings";
 
 const C = {
   cream: "#f5f0e8", creamLight: "#faf8f2", creamDark: "#efe8d8",
@@ -228,17 +235,35 @@ function AgentUsageRow({ label, pct, color, count }: { label: string; pct: numbe
   );
 }
 
+import { supabase } from "../../lib/supabase";
+
 // ── Main Dashboard ────────────────────────────────────────────
 export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => void }) {
   const [activeNav, setActiveNav] = useState("Dashboard");
   const [greeting, setGreeting] = useState("Good morning");
+  const [user, setUser] = useState<{ name: string; institution: string } | null>(null);
 
   useEffect(() => {
+    const fetchUser = async () => {
+      const { data: { user: sbUser } } = await supabase.auth.getUser();
+      if (sbUser) {
+        setUser({
+          name: sbUser.user_metadata?.full_name || "Researcher",
+          institution: sbUser.user_metadata?.institution || "GenResearch",
+        });
+      }
+    };
+    fetchUser();
+
     const h = new Date().getHours();
     if (h < 12) setGreeting("Good morning");
     else if (h < 17) setGreeting("Good afternoon");
     else setGreeting("Good evening");
   }, []);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+  };
 
   const tasks: Task[] = [
     { id: "1", title: "Transformer Architectures in NLP", agent: "Summarization Agent", papers: 3, status: "completed", time: "Today, 2:14 PM", score: 87 },
@@ -351,14 +376,14 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
               background: C.inkDark,
               display: "flex", alignItems: "center", justifyContent: "center",
               fontFamily: "'Playfair Display', serif", fontSize: 12, fontWeight: 700, color: C.cream,
-            }}>A</div>
+            }}>{user?.name.charAt(0) || "U"}</div>
             <div>
-              <div style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 12.5, fontWeight: 600, color: C.inkDark, lineHeight: 1 }}>Ali Ahmed</div>
-              <div style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 10, color: C.inkLight }}>BSE-SP23</div>
+              <div style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 12.5, fontWeight: 600, color: C.inkDark, lineHeight: 1 }}>{user?.name || "Loading..."}</div>
+              <div style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 10, color: C.inkLight }}>{user?.institution || "Researcher"}</div>
             </div>
           </div>
 
-          <button className="btn-gold" style={{ padding: "9px 20px" }}>
+          <button className="btn-gold" style={{ padding: "9px 20px" }} onClick={() => setActiveNav("Upload Papers")}>
             + New Task
           </button>
         </div>
@@ -369,6 +394,7 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
         position: "fixed", top: 64, left: 0, bottom: 0, width: 220,
         background: C.creamLight, borderRight: `1px solid ${C.border}`,
         overflowY: "auto", zIndex: 200, padding: "20px 12px",
+        display: "flex", flexDirection: "column",
       }}>
         {/* Navigation */}
         <div style={{ marginBottom: 28 }}>
@@ -433,6 +459,22 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
           <MiniBar value={24} color={C.gold} />
           <div style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 11, color: C.inkLight, marginTop: 4 }}>24% of 5 GB used</div>
         </div>
+
+        {/* Sign Out */}
+        <div style={{ marginTop: "auto", padding: "12px 4px 0", borderTop: `1px solid ${C.border}` }}>
+          <button onClick={handleSignOut} style={{
+            width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 10,
+            padding: "10px 16px", background: "transparent", border: "none", borderRadius: 3,
+            cursor: "pointer", transition: "all .2s",
+            fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13.5, color: "#a0522d",
+          }}
+            onMouseEnter={e => { e.currentTarget.style.background = "rgba(160,82,45,0.08)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+          >
+            <span style={{ fontSize: 14 }}>⏻</span>
+            Sign Out
+          </button>
+        </div>
       </aside>
 
       {/* ── Main content ── */}
@@ -442,6 +484,16 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
         padding: "36px 40px",
         background: C.cream,
       }}>
+
+        {activeNav === "Upload Papers" && <UploadPapers />}
+        {activeNav === "My Papers" && <MyPapers />}
+        {activeNav === "Agents" && <Agents />}
+        {activeNav === "Results" && <Results />}
+        {activeNav === "Citations" && <Citations />}
+        {activeNav === "Library" && <Library />}
+        {activeNav === "Settings" && <Settings />}
+
+        {activeNav === "Dashboard" && (<>
 
         {/* Greeting header */}
         <div className="fade-1" style={{ marginBottom: 36 }}>
@@ -454,15 +506,15 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
                 </span>
               </div>
               <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: "clamp(24px, 3vw, 36px)", fontWeight: 900, color: C.inkDark, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
-                {greeting}, <em style={{ color: C.gold }}>Ali.</em>
+                {greeting}, <em style={{ color: C.gold }}>{user?.name.split(" ")[0] || "Researcher"}.</em>
               </h1>
               <p style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 15, color: C.inkLight, marginTop: 6, lineHeight: 1.6 }}>
                 You have <strong style={{ color: C.inkDark }}>1 task in progress</strong> and <strong style={{ color: C.inkDark }}>3 new results</strong> ready to review.
               </p>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn-outline">View All Results</button>
-              <button className="btn-gold">+ Begin Research</button>
+              <button className="btn-outline" onClick={() => setActiveNav("Results")}>View All Results</button>
+              <button className="btn-gold" onClick={() => setActiveNav("Upload Papers")}>+ Begin Research</button>
             </div>
           </div>
         </div>
@@ -486,12 +538,12 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
                   <div style={{ height: 1, width: 22, background: C.gold }} />
                   <span style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 11, fontWeight: 600, color: C.gold, letterSpacing: "0.15em", textTransform: "uppercase" }}>Recent Tasks</span>
                 </div>
-                <button className="btn-outline" style={{ padding: "5px 14px", fontSize: 11.5 }}>View All</button>
+                <button className="btn-outline" style={{ padding: "5px 14px", fontSize: 11.5 }} onClick={() => setActiveNav("Results")}>View All</button>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {tasks.map((t, i) => (
                   <div key={t.id} style={{ animation: `fadeUp .5s ${i * 0.07 + 0.2}s both` }}>
-                    <TaskCard task={t} onOpen={() => {}} />
+                    <TaskCard task={t} onOpen={() => setActiveNav("Results")} />
                   </div>
                 ))}
               </div>
@@ -510,13 +562,13 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
               }}>Quick Actions</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {[
-                  { label: "Upload New Papers", icon: "↑", color: C.gold },
-                  { label: "Run Summarization", icon: "◈", color: C.gold },
-                  { label: "Generate Literature Review", icon: "◉", color: C.sienna },
-                  { label: "Format Citations (APA)", icon: "◎", color: C.umber },
-                  { label: "Draft Research Proposal", icon: "◐", color: C.inkMid },
+                  { label: "Upload New Papers", icon: "↑", color: C.gold, nav: "Upload Papers" },
+                  { label: "Run Summarization", icon: "◈", color: C.gold, nav: "Agents" },
+                  { label: "Generate Literature Review", icon: "◉", color: C.sienna, nav: "Agents" },
+                  { label: "Format Citations (APA)", icon: "◎", color: C.umber, nav: "Citations" },
+                  { label: "Draft Research Proposal", icon: "◐", color: C.inkMid, nav: "Agents" },
                 ].map(a => (
-                  <button key={a.label} style={{
+                  <button key={a.label} onClick={() => setActiveNav(a.nav)} style={{
                     display: "flex", alignItems: "center", gap: 10,
                     padding: "11px 14px", width: "100%", textAlign: "left",
                     background: "transparent",
@@ -580,10 +632,12 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
             Cross-paper analysis produces significantly more insightful research gap identification.
           </div>
           <button className="btn-outline" style={{ color: C.goldLight, borderColor: "rgba(200,151,30,0.35)", flexShrink: 0 }}
+            onClick={() => setActiveNav("Library")}
             onMouseEnter={e => { e.currentTarget.style.borderColor = C.goldLight; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(200,151,30,0.35)"; }}
           >Learn More</button>
         </div>
+      </>)}
       </main>
     </>
   );

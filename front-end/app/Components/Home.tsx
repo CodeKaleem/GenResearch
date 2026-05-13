@@ -148,7 +148,7 @@ function FeatureCard({
 }
 
 // ── Main Page ───────────────────────────────────────────────────
-export default function DesignA({ onNavigate }: { onNavigate?: () => void }) {
+export default function DesignA({ onNavigate, onNavigateLogin }: { onNavigate?: () => void; onNavigateLogin?: () => void }) {
   const [scrolled, setScrolled] = useState(false);
   const typed = useTypewriter([
     "Literature Reviews",
@@ -250,13 +250,18 @@ export default function DesignA({ onNavigate }: { onNavigate?: () => void }) {
         </div>
 
         <div style={{ display: "flex", gap: 32 }}>
-          {["Features", "Agents", "Workflow", "About"].map(l => (
-            <a key={l} href="#" className="nav-link">{l}</a>
+          {[
+            { label: "Features", href: "#features" },
+            { label: "Agents", href: "#features" },
+            { label: "Workflow", href: "#workflow" },
+            { label: "About", href: "#cta" },
+          ].map(l => (
+            <a key={l.label} href={l.href} className="nav-link">{l.label}</a>
           ))}
         </div>
 
         <div style={{ display: "flex", gap: 12 }}>
-          <button className="btn-outline-dark">Sign In</button>
+          <button className="btn-outline-dark" onClick={onNavigateLogin}>Sign In</button>
           <button className="btn-main" onClick={onNavigate}>Get Started</button>
         </div>
       </nav>
@@ -349,7 +354,7 @@ export default function DesignA({ onNavigate }: { onNavigate?: () => void }) {
 
           <div className="fade4" style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 56 }}>
             <button className="btn-main" onClick={onNavigate}>Begin Research →</button>
-            <button className="btn-outline-dark">View Documentation</button>
+            <button className="btn-outline-dark" onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}>View Documentation</button>
           </div>
 
           {/* Agent list */}
@@ -424,7 +429,7 @@ export default function DesignA({ onNavigate }: { onNavigate?: () => void }) {
       </section>
 
       {/* FEATURES */}
-      <section id="features" style={{ padding: "110px 52px", background: "#f5f0e8" }}>
+      <section id="features" style={{ padding: "110px 52px", background: "#f5f0e8", scrollMarginTop: 64 }}>
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 32, marginBottom: 64 }}>
             <div>
@@ -478,7 +483,7 @@ export default function DesignA({ onNavigate }: { onNavigate?: () => void }) {
       </section>
 
       {/* WORKFLOW */}
-      <section style={{ padding: "110px 52px", background: "#efe8d8" }}>
+      <section id="workflow" style={{ padding: "110px 52px", background: "#efe8d8", scrollMarginTop: 64 }}>
         <div style={{ maxWidth: 900, margin: "0 auto", textAlign: "center" }}>
           <div style={{
             fontFamily: "'Crimson Pro', Georgia, serif",
@@ -542,7 +547,7 @@ export default function DesignA({ onNavigate }: { onNavigate?: () => void }) {
       </section>
 
       {/* TECH + CTA */}
-      <section style={{ padding: "90px 52px", background: "#f5f0e8", textAlign: "center" }}>
+      <section id="cta" style={{ padding: "90px 52px", background: "#f5f0e8", textAlign: "center", scrollMarginTop: 64 }}>
         <div style={{
           fontFamily: "'Crimson Pro', Georgia, serif",
           fontSize: 11, color: "#8b6914", letterSpacing: "0.18em",
@@ -552,7 +557,7 @@ export default function DesignA({ onNavigate }: { onNavigate?: () => void }) {
           display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 12, marginBottom: 72,
           maxWidth: 700, margin: "0 auto 72px",
         }}>
-          {["React · Next.js", "TypeScript", "FastAPI", "LangChain", "LangGraph", "ChromaDB", "PyPDF", "OpenAI", "JWT Auth"].map(t => (
+          {["React · Next.js", "TypeScript", "FastAPI", "LangChain", "LangGraph", "ChromaDB", "PyPDF", "OpenAI", "Supabase Auth"].map(t => (
             <span key={t} style={{
               padding: "7px 16px",
               border: "1px solid rgba(139,105,20,0.2)",

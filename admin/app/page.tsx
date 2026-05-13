@@ -2,14 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabase";
-import Home from "./Components/Home";
-import Dashboard from "./Components/Dashboard";
-import Login from "./Components/Login";
-import Register from "./Components/Register";
+import AdminDashboard from "./components/AdminDashboard";
+import AdminLogin from "./components/AdminLogin";
 
-type View = "home" | "login" | "register" | "dashboard" | "loading";
+type View = "loading" | "login" | "dashboard";
 
-export default function Page() {
+export default function Home() {
   const [view, setView] = useState<View>("loading");
 
   useEffect(() => {
@@ -19,7 +17,7 @@ export default function Page() {
       if (session) {
         setView("dashboard");
       } else {
-        setView("home");
+        setView("login");
       }
     };
 
@@ -30,7 +28,7 @@ export default function Page() {
       if (session) {
         setView("dashboard");
       } else {
-        setView("home");
+        setView("login");
       }
     });
 
@@ -59,7 +57,7 @@ export default function Page() {
             animation: "spin 1s linear infinite",
             margin: "0 auto 16px" 
           }} />
-          <div style={{ color: "#8b6914", fontSize: 14, letterSpacing: "0.1em", textTransform: "uppercase" }}>Loading GenResearch...</div>
+          <div style={{ color: "#8b6914", fontSize: 14, letterSpacing: "0.1em", textTransform: "uppercase" }}>Initializing System...</div>
         </div>
         <style>{`
           @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -70,30 +68,16 @@ export default function Page() {
 
   return (
     <>
-      {view === "home" && (
-        <Home
-          onNavigate={() => setView("register")}
-          onNavigateLogin={() => setView("login")}
-        />
-      )}
       {view === "login" && (
-        <Login
-          onLoginSuccess={() => setView("dashboard")}
-          onNavigateRegister={() => setView("register")}
-          onNavigateHome={() => setView("home")}
-        />
-      )}
-      {view === "register" && (
-        <Register
-          onRegisterSuccess={() => setView("login")}
-          onNavigateLogin={() => setView("login")}
-          onNavigateHome={() => setView("home")}
+        <AdminLogin 
+          onLoginSuccess={() => setView("dashboard")} 
         />
       )}
       {view === "dashboard" && (
-        <Dashboard onNavigateHome={() => setView("home")} />
+        <AdminDashboard />
       )}
     </>
   );
 }
+
 
