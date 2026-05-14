@@ -1,33 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { C, sectionLabel, headingStyle, bodyText, cardBase } from "./theme";
+import { getCurrentUserId, subscribeToPapers, type Paper as DBPaper } from "../../lib/db";
 
 interface Paper {
   id: string; title: string; authors: string; year: number;
-  pages: number; tags: string[]; status: "indexed" | "processing" | "unread"; addedDate: string;
+  pages: number; tags: string[]; status: "indexed" | "processing" | "unread" | "failed"; addedDate: string;
 }
 
-const papers: Paper[] = [
-  { id: "1", title: "Attention Is All You Need", authors: "Vaswani, A. et al.", year: 2017, pages: 15, tags: ["NLP", "Transformers"], status: "indexed", addedDate: "May 4, 2025" },
-  { id: "2", title: "BERT: Pre-training of Deep Bidirectional Transformers", authors: "Devlin, J. et al.", year: 2019, pages: 13, tags: ["NLP", "Pre-training"], status: "indexed", addedDate: "May 4, 2025" },
-  { id: "3", title: "GPT-4 Technical Report", authors: "OpenAI", year: 2023, pages: 98, tags: ["LLM", "GPT"], status: "processing", addedDate: "May 4, 2025" },
-  { id: "4", title: "A Survey on Federated Learning", authors: "Li, T. et al.", year: 2024, pages: 42, tags: ["Federated Learning"], status: "indexed", addedDate: "May 3, 2025" },
-  { id: "5", title: "Reinforcement Learning in Robotics", authors: "Kober, J. et al.", year: 2023, pages: 38, tags: ["RL", "Robotics"], status: "indexed", addedDate: "May 1, 2025" },
-  { id: "6", title: "Diffusion Models: A Comprehensive Survey", authors: "Yang, L. et al.", year: 2024, pages: 55, tags: ["Generative AI"], status: "indexed", addedDate: "Apr 30, 2025" },
-  { id: "7", title: "Chain-of-Thought Prompting Elicits Reasoning", authors: "Wei, J. et al.", year: 2022, pages: 18, tags: ["LLM", "Prompting"], status: "indexed", addedDate: "Apr 29, 2025" },
-  { id: "8", title: "LoRA: Low-Rank Adaptation of LLMs", authors: "Hu, E. et al.", year: 2022, pages: 17, tags: ["Fine-tuning", "LLM"], status: "unread", addedDate: "Apr 28, 2025" },
-  { id: "9", title: "LLaMA: Open Foundation Language Models", authors: "Touvron, H. et al.", year: 2023, pages: 27, tags: ["LLM"], status: "indexed", addedDate: "Apr 27, 2025" },
-  { id: "10", title: "Vision Transformers for Dense Prediction", authors: "Ranftl, R. et al.", year: 2021, pages: 22, tags: ["Computer Vision"], status: "indexed", addedDate: "Apr 26, 2025" },
-  { id: "11", title: "Neural Architecture Search: A Survey", authors: "Elsken, T. et al.", year: 2019, pages: 46, tags: ["AutoML"], status: "unread", addedDate: "Apr 25, 2025" },
-  { id: "12", title: "Self-Supervised Learning: A Survey", authors: "Liu, X. et al.", year: 2024, pages: 35, tags: ["SSL"], status: "indexed", addedDate: "Apr 24, 2025" },
-];
-
-const allTags = Array.from(new Set(papers.flatMap(p => p.tags)));
-
 function StatusBadge({ status }: { status: Paper["status"] }) {
-  const m = { indexed: { l: "Indexed", c: C.green }, processing: { l: "Processing", c: C.gold }, unread: { l: "Unread", c: C.umber } };
-  const s = m[status];
+  const m = {
+    indexed: { l: "Indexed", c: C.green },
+    processing: { l: "Processing", c: C.gold },
+    unread: { l: "Unread", c: C.umber },
+    failed: { l: "Failed", c: C.red }
+  };
+  const s = m[status] || m.unread;
   return <span style={{ padding: "3px 10px", borderRadius: 2, background: `${s.c}15`, border: `1px solid ${s.c}33`, fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 11, fontWeight: 600, color: s.c, letterSpacing: "0.08em", textTransform: "uppercase" }}>{s.l}</span>;
 }
 
@@ -53,9 +42,35 @@ function PaperCard({ paper }: { paper: Paper }) {
 }
 
 export default function MyPapers() {
+  const [dbPapers, setDbPapers] = useState<DBPaper[]>([]);
   const [search, setSearch] = useState("");
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"date" | "title" | "year">("date");
+
+  useEffect(() => {
+    let isMounted = true;
+    let unsub: (() => void) | undefined;
+    getCurrentUserId().then(uid => {
+      if (uid && isMounted) unsub = subscribeToPapers(uid, setDbPapers);
+    });
+    return () => {
+      isMounted = false;
+      unsub?.();
+    };
+  }, []);
+
+  const papers: Paper[] = dbPapers.map(p => ({
+    id: p.id,
+    title: p.title,
+    authors: p.authors,
+    year: p.year || 0,
+    pages: p.pages,
+    tags: p.tags,
+    status: p.status,
+    addedDate: new Date(p.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+  }));
+
+  const allTags = Array.from(new Set(papers.flatMap(p => p.tags)));
 
   const filtered = papers.filter(p => {
     const q = search.toLowerCase();

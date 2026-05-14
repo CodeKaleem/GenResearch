@@ -59,9 +59,14 @@ export default function AdminLogin({ onLoginSuccess }: {
       const { data, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
       if (authError) { setError(authError.message); setLoading(false); return; }
 
-      // Verify admin role — reject non-admin users
-      const role = data.user?.user_metadata?.role;
-      if (role !== "admin") {
+      // Verify admin role — check profiles table for authority
+      const { data: profile, error: profileErr } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", data.user?.id)
+        .single();
+
+      if (profileErr || profile?.role?.toLowerCase() !== "admin") {
         await supabase.auth.signOut();
         setError("Access denied. This console is restricted to administrators.");
         setLoading(false);

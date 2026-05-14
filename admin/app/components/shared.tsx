@@ -79,20 +79,26 @@ export function Num({ to, prefix = "", suffix = "", duration = 1600 }: {
   const ref = useRef<HTMLSpanElement>(null);
   const started = useRef(false);
   useEffect(() => {
+    let animationId: number;
     const io = new IntersectionObserver(([e]) => {
-      if (e.isIntersecting && !started.current) {
-        started.current = true;
+      if (e.isIntersecting) {
         const t0 = performance.now();
+        const startVal = v;
         const tick = (n: number) => {
           const p = Math.min((n - t0) / duration, 1);
-          setV(Math.round((1 - Math.pow(1 - p, 3)) * to));
-          if (p < 1) requestAnimationFrame(tick);
+          const ease = 1 - Math.pow(1 - p, 3);
+          setV(Math.round(startVal + (to - startVal) * ease));
+          if (p < 1) animationId = requestAnimationFrame(tick);
         };
-        requestAnimationFrame(tick);
+        animationId = requestAnimationFrame(tick);
+        io.disconnect();
       }
-    }, { threshold: 0.4 });
+    }, { threshold: 0.1 });
     if (ref.current) io.observe(ref.current);
-    return () => io.disconnect();
+    return () => {
+      io.disconnect();
+      if (animationId) cancelAnimationFrame(animationId);
+    };
   }, [to, duration]);
   return <span ref={ref}>{prefix}{v.toLocaleString()}{suffix}</span>;
 }

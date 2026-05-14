@@ -1,48 +1,89 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { C, PageTitle, SectionHead, Num, StatCardProps, StatCard, Badge, UserTableRow, UserRow, AgentHealth, AgentHealthRow, LogEntry, LogRow, CostRow, Bar } from "./shared";
-
-// ── Data ────────────────────────────────────────────────────
-const users: UserRow[] = [
-  { id:"1", name:"Ali Ahmed",      email:"ali.ahmed@comsats.edu.pk",   role:"Admin",      papers:12, tasks:8,  status:"active",    joined:"Jan 2025" },
-  { id:"2", name:"Kaleem Abbasi",  email:"kaleem@comsats.edu.pk",      role:"Researcher", papers:18, tasks:15, status:"active",    joined:"Jan 2025" },
-  { id:"3", name:"Sara Malik",     email:"sara.malik@uet.edu.pk",      role:"Researcher", papers:7,  tasks:4,  status:"active",    joined:"Feb 2025" },
-];
-
-const agents: AgentHealth[] = [
-  { name:"Summarization Agent",      status:"online",   requests:1842, avgTime:"24s",  errorRate:1.2, uptime:99.8 },
-  { name:"Literature Review Agent",  status:"online",   requests:634,  avgTime:"58s",  errorRate:2.1, uptime:99.1 },
-  { name:"Citation Agent",           status:"degraded", requests:411,  avgTime:"12s",  errorRate:8.4, uptime:94.3 },
-];
-
-const logs: LogEntry[] = [
-  { id:"1", level:"success", message:"Summarization task completed for user ali.ahmed",       time:"14:32:11", agent:"Summarization" },
-  { id:"2", level:"warn",    message:"Citation Agent timeout on CrossRef API call — retrying",time:"14:31:44", agent:"Citation" },
-  { id:"4", level:"error",   message:"ChromaDB collection query failed — null embedding",     time:"14:28:55", agent:"RAG Engine" },
-];
-
-const statCards: StatCardProps[] = [
-  { icon:"👥", label:"Total Users",     value:142,    suffix:"",    sub:"Registered researchers",      trend:"+12 this month",  trendUp:true,  color:C.gold,   sparkData:[80,90,95,102,110,118,125,130,135,142] },
-  { icon:"📄", label:"Papers Indexed",  value:3847,   suffix:"",    sub:"Across all collections",      trend:"+284 this week",  trendUp:true,  color:C.sienna, sparkData:[3100,3200,3350,3480,3550,3620,3700,3780,3820,3847] },
-  { icon:"⚙",  label:"Tasks Completed", value:9214,   suffix:"",    sub:"Since platform launch",       trend:"+63 today",       trendUp:true,  color:C.umber,  sparkData:[8000,8300,8500,8700,8850,8980,9050,9120,9180,9214] },
-  { icon:"⚡", label:"Avg Response",    value:28,     suffix:"s",   sub:"LLM generation time",         trend:"−4s vs last wk",  trendUp:true,  color:C.green,  sparkData:[38,35,34,32,31,30,29,28,28,28] },
-];
+import { subscribeToProfiles, subscribeToPlatformStats, subscribeToAgentLogs, subscribeToSystemAlerts, subscribeToApiCosts, subscribeToTasks, type Profile, type PlatformStats, type AgentLog, type SystemAlert, type Task } from "../../lib/db";
 
 export default function OverviewPage() {
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [stats, setStats] = useState<PlatformStats>({ total_users: 0, total_papers: 0, total_tasks_completed: 0, active_tasks: 0, total_citations: 0 });
+  const [alerts, setAlerts] = useState<SystemAlert[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [alertDismissed, setAlertDismissed] = useState(false);
+
+  useEffect(() => {
+    const unsubProfiles = subscribeToProfiles((data) => {
+      setUsers(data.slice(0, 5).map(u => ({
+        id: u.id,
+        name: u.full_name,
+        email: u.email,
+        role: u.role,
+        papers: 0,
+        tasks: 0,
+        status: u.status as any,
+        joined: new Date(u.created_at).toLocaleDateString("en-US", { month: "short", year: "numeric" })
+      })));
+    });
+
+    const unsubStats = subscribeToPlatformStats(setStats);
+    
+    const unsubLogs = subscribeToAgentLogs((data) => {
+      setLogs(data.slice(0, 5).map(l => ({
+        id: l.id,
+        level: l.level as any,
+        message: l.message,
+        time: new Date(l.created_at).toLocaleTimeString("en-US", { hour12: false }),
+        agent: l.agent || "System"
+      })));
+    });
+
+    const unsubAlerts = subscribeToSystemAlerts(setAlerts);
+    const unsubTasks = subscribeToTasks(setTasks);
+
+    return () => {
+      unsubProfiles();
+      unsubStats();
+      unsubLogs();
+      unsubAlerts();
+      unsubTasks();
+    };
+  }, []);
+
+  const activeAlert = alerts.find(a => a.status === "active");
+
+  const statCards: StatCardProps[] = [
+    { icon: "👥", label: "Total Users", value: stats.total_users, suffix: "", sub: "Registered researchers", trend: "Live count", trendUp: true, color: C.gold, sparkData: [0, 0, 0, 0, 0, 0, 0, 0, 0, stats.total_users] },
+    { icon: "📄", label: "Papers Indexed", value: stats.total_papers, suffix: "", sub: "Across all collections", trend: "Total items", trendUp: true, color: C.sienna, sparkData: [0, 0, 0, 0, 0, 0, 0, 0, 0, stats.total_papers] },
+    { icon: "⚙", label: "Tasks Done", value: stats.total_tasks_completed, suffix: "", sub: "Successful outputs", trend: "Platform total", trendUp: true, color: C.umber, sparkData: [0, 0, 0, 0, 0, 0, 0, 0, 0, stats.total_tasks_completed] },
+    { icon: "⚡", label: "Active Tasks", value: stats.active_tasks, suffix: "", sub: "Real-time queue", trend: "Pending load", trendUp: stats.active_tasks < 5, color: C.green, sparkData: [0, 0, 0, 0, 0, 0, 0, 0, 0, stats.active_tasks] },
+  ];
+
+  const agentTypes = ["Summarization", "Literature Review", "Citation", "Proposal"];
+  const agents: AgentHealth[] = agentTypes.map(type => {
+    const alert = alerts.find(a => a.agent?.startsWith(type) && a.status === "active");
+    const agentTasks = tasks.filter(t => t.agent_type.replace(/_/g, " ").toLowerCase() === type.toLowerCase());
+    return {
+      name: `${type} Agent`,
+      status: alert ? (alert.severity === "critical" ? "offline" : "degraded") : "online",
+      requests: agentTasks.length,
+      avgTime: agentTasks.length > 0 ? "Real-time" : "—",
+      errorRate: alert ? 100 : 0,
+      uptime: alert ? 0 : 100
+    };
+  });
 
   return (
     <div style={{ animation: "fadeUp .5s both" }}>
       <PageTitle title="System Overview" sub={new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} actions={<><button className="btn-ghost">Export Report</button><button className="btn-gold">+ Invite User</button></>} />
 
-      {!alertDismissed && (
-        <div className="a1" style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 18px", marginBottom: 24, background: C.redFaint, border: `1px solid ${C.red}44`, borderLeft: `3px solid ${C.red}`, borderRadius: 4 }}>
-          <span style={{ color: C.red, fontSize: 15, flexShrink: 0 }}>⚠</span>
+      {activeAlert && !alertDismissed && (
+        <div className="a1" style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 18px", marginBottom: 24, background: activeAlert.severity === "critical" ? C.redFaint : C.goldFaint, border: `1px solid ${activeAlert.severity === "critical" ? C.red : C.gold}44`, borderLeft: `3px solid ${activeAlert.severity === "critical" ? C.red : C.gold}`, borderRadius: 4 }}>
+          <span style={{ color: activeAlert.severity === "critical" ? C.red : C.gold, fontSize: 15, flexShrink: 0 }}>{activeAlert.severity === "critical" ? "⚠" : "ℹ"}</span>
           <div style={{ flex: 1 }}>
-            <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 13, fontWeight: 700, color: C.red }}>Citation Agent Degraded — </span>
-            <span style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, color: C.inkMid }}>CrossRef API error rate at 8.4%. Tasks may fail. Check API key configuration.</span>
+            <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 13, fontWeight: 700, color: activeAlert.severity === "critical" ? C.red : C.gold }}>{activeAlert.title} — </span>
+            <span style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, color: C.inkMid }}>{activeAlert.message}</span>
           </div>
-          <button onClick={() => setAlertDismissed(true)} style={{ background: "transparent", border: "none", cursor: "pointer", color: C.red, fontSize: 16, lineHeight: 1, flexShrink: 0, padding: 2 }}>✕</button>
+          <button onClick={() => setAlertDismissed(true)} style={{ background: "transparent", border: "none", cursor: "pointer", color: activeAlert.severity === "critical" ? C.red : C.gold, fontSize: 16, lineHeight: 1, flexShrink: 0, padding: 2 }}>✕</button>
         </div>
       )}
 
@@ -57,17 +98,16 @@ export default function OverviewPage() {
       <div className="a3" style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 22, marginBottom: 22 }}>
         <div className="card">
           <div style={{ padding: "18px 20px", borderBottom: `1px solid ${C.border}` }}>
-            <SectionHead label="User Management" />
+            <SectionHead label="Recent Users" />
           </div>
-          {users.map(u => <UserTableRow key={u.id} user={u} />)}
+          {users.length === 0 ? (
+            <div style={{ padding: 40, textAlign: "center", color: C.inkLight }}>No users found.</div>
+          ) : (
+            users.map(u => <UserTableRow key={u.id} user={u} />)
+          )}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <div className="card" style={{ padding: "20px 18px" }}>
-            <SectionHead label="API Cost Breakdown" />
-            <CostRow label="Summarization Agent" tokens="841K tokens" cost="$1.68" pct={40} color={C.gold} />
-            <CostRow label="Literature Review"   tokens="562K tokens" cost="$1.12" pct={27} color={C.sienna} />
-          </div>
           <div className="card" style={{ padding: "20px 18px" }}>
             <SectionHead label="Quick Actions" />
             {[
@@ -94,7 +134,11 @@ export default function OverviewPage() {
           <div style={{ padding: "16px 20px 0", borderBottom: `1px solid ${C.border}` }}>
             <SectionHead label="System Logs" />
           </div>
-          {logs.map(entry => <LogRow key={entry.id} entry={entry} />)}
+          {logs.length === 0 ? (
+            <div style={{ padding: 40, textAlign: "center", color: C.inkLight }}>No recent logs.</div>
+          ) : (
+            logs.map(entry => <LogRow key={entry.id} entry={entry} />)
+          )}
         </div>
       </div>
     </div>

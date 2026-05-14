@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { C, sectionLabel, headingStyle, bodyText, cardBase } from "./theme";
+import { getCurrentUserId, subscribeToResults, type TaskResult as DBResult } from "../../lib/db";
 
 type ResultType = "summary" | "review" | "citation" | "proposal";
 interface Result {
@@ -9,24 +10,16 @@ interface Result {
   score: number; date: string; preview: string;
 }
 
-const results: Result[] = [
-  { id: "1", title: "Transformer Architectures in NLP", agent: "Summarization Agent", type: "summary", score: 87, date: "Today, 2:14 PM", preview: "This paper introduces the Transformer architecture, which relies entirely on self-attention mechanisms. Key contributions include multi-head attention, positional encoding, and the encoder-decoder framework that has become the foundation for modern NLP…" },
-  { id: "2", title: "Federated Learning Survey — Key Findings", agent: "Summarization Agent", type: "summary", score: 92, date: "Yesterday", preview: "A comprehensive overview of federated learning paradigms. The survey categorizes FL into horizontal, vertical, and transfer approaches. Key challenges identified include communication efficiency, data heterogeneity, and privacy guarantees…" },
-  { id: "3", title: "BERT vs GPT Comparative Analysis", agent: "Literature Review Agent", type: "review", score: 88, date: "Today, 3:01 PM", preview: "Comparative analysis reveals fundamental architectural differences: BERT employs bidirectional encoding while GPT uses autoregressive decoding. Performance benchmarks show BERT excels in classification tasks while GPT demonstrates superior generation…" },
-  { id: "4", title: "Reinforcement Learning in Robotics — Proposal", agent: "Proposal Drafting Agent", type: "proposal", score: 79, date: "3 days ago", preview: "Research Proposal: Investigating the application of model-based reinforcement learning to robotic manipulation tasks. Proposed methodology includes sim-to-real transfer using domain randomization and curriculum learning strategies…" },
-  { id: "5", title: "Computer Vision Benchmarks — References", agent: "Citation Agent", type: "citation", score: 95, date: "2 days ago", preview: "[1] He, K., Zhang, X., Ren, S., & Sun, J. (2016). Deep Residual Learning for Image Recognition. CVPR.\n[2] Dosovitskiy, A. et al. (2021). An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale. ICLR." },
-];
-
-const typeConfig: Record<ResultType, { label: string; color: string }> = {
-  summary:  { label: "Summary",  color: C.gold },
-  review:   { label: "Review",   color: C.sienna },
-  citation: { label: "Citation", color: C.umber },
-  proposal: { label: "Proposal", color: C.inkMid },
+const typeConfig: Record<ResultType, { label: string; agent: string; color: string }> = {
+  summary:  { label: "Summary",  agent: "Summarization Agent",  color: C.gold },
+  review:   { label: "Review",   agent: "Literature Review Agent",   color: C.sienna },
+  citation: { label: "Citation", agent: "Citation Agent", color: C.umber },
+  proposal: { label: "Proposal", agent: "Proposal Drafting Agent", color: C.inkMid },
 };
 
 function ResultCard({ result, expanded, onToggle }: { result: Result; expanded: boolean; onToggle: () => void }) {
   const [hov, setHov] = useState(false);
-  const tc = typeConfig[result.type];
+  const tc = typeConfig[result.type] || typeConfig.summary;
   return (
     <div onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)} style={{ ...cardBase, padding: "22px 24px", background: hov || expanded ? C.white : C.creamLight, borderColor: hov || expanded ? C.borderGold : C.border, transition: "all .25s", cursor: "pointer" }} onClick={onToggle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
@@ -48,9 +41,8 @@ function ResultCard({ result, expanded, onToggle }: { result: Result; expanded: 
           <div style={{ ...sectionLabel, fontSize: 10, marginBottom: 10 }}>Output Preview</div>
           <div style={{ ...bodyText, fontSize: 13.5, lineHeight: 1.7, whiteSpace: "pre-wrap", background: C.creamDark, padding: "16px 18px", borderRadius: 3, border: `1px solid ${C.border}` }}>{result.preview}</div>
           <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-            <button className="btn-ink" style={{ padding: "7px 16px", fontSize: 11 }} onClick={(e) => { e.stopPropagation(); alert("Download started for: " + result.title); }}>Download</button>
+            <button className="btn-ink" style={{ padding: "7px 16px", fontSize: 11 }}>Download</button>
             <button className="btn-outline" style={{ padding: "7px 16px", fontSize: 11 }} onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(result.preview).catch(() => {}); alert("Copied to clipboard!"); }}>Copy</button>
-            <button className="btn-outline" style={{ padding: "7px 16px", fontSize: 11 }} onClick={(e) => { e.stopPropagation(); alert("Re-running task: " + result.title); }}>Re-run</button>
           </div>
         </div>
       )}
@@ -59,8 +51,32 @@ function ResultCard({ result, expanded, onToggle }: { result: Result; expanded: 
 }
 
 export default function Results() {
+  const [dbResults, setDbResults] = useState<DBResult[]>([]);
   const [activeFilter, setActiveFilter] = useState<ResultType | "all">("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    let unsub: (() => void) | undefined;
+    getCurrentUserId().then(uid => {
+      if (uid && isMounted) unsub = subscribeToResults(uid, setDbResults);
+    });
+    return () => {
+      isMounted = false;
+      unsub?.();
+    };
+  }, []);
+
+  const results: Result[] = dbResults.map(r => ({
+    id: r.id,
+    title: r.title,
+    agent: typeConfig[r.type as ResultType]?.agent || "Unknown Agent",
+    type: r.type as ResultType,
+    score: r.score,
+    date: new Date(r.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+    preview: r.content
+  }));
+
   const filters: { key: ResultType | "all"; label: string }[] = [
     { key: "all", label: "All" }, { key: "summary", label: "Summaries" },
     { key: "review", label: "Reviews" }, { key: "citation", label: "Citations" },
@@ -80,7 +96,7 @@ export default function Results() {
             <h1 style={{ ...headingStyle, fontSize: "clamp(24px, 3vw, 34px)" }}>Task <em style={{ color: C.gold }}>Results</em></h1>
             <p style={{ ...bodyText, fontSize: 14, marginTop: 4 }}>{results.length} completed outputs ready to review</p>
           </div>
-          <button className="btn-gold" style={{ padding: "8px 18px", fontSize: 11.5 }} onClick={() => alert("Exporting all " + results.length + " results…")}>Export All</button>
+          <button className="btn-gold" style={{ padding: "8px 18px", fontSize: 11.5 }}>Export All</button>
         </div>
       </div>
 

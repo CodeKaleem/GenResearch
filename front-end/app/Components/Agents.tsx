@@ -1,27 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { C, sectionLabel, headingStyle, bodyText, cardBase } from "./theme";
+import { getCurrentUserId, subscribeToTasks, type Task as DBTask } from "../../lib/db";
+import { supabase } from "../../lib/supabase";
 
 interface Agent {
   id: string; name: string; desc: string; status: "online" | "busy" | "offline";
   tasks: number; avgScore: number; color: string; icon: string; usage: number;
+  agentType: string;
 }
 
-const agents: Agent[] = [
-  { id: "1", name: "Summarization Agent", desc: "Extracts key findings, methodologies, and contributions from research papers into clear, structured summaries.", status: "online", tasks: 42, avgScore: 89, color: C.gold, icon: "◈", usage: 50 },
-  { id: "2", name: "Literature Review Agent", desc: "Analyzes multiple papers to produce comparative reviews, identifying research gaps and thematic connections.", status: "busy", tasks: 18, avgScore: 91, color: C.sienna, icon: "◉", usage: 25 },
-  { id: "3", name: "Citation Agent", desc: "Automatically extracts and formats references in APA, MLA, IEEE, or Chicago style, verified against CrossRef.", status: "online", tasks: 31, avgScore: 95, color: C.umber, icon: "◎", usage: 13 },
-  { id: "4", name: "Proposal Drafting Agent", desc: "Transforms research ideas into structured, polished proposals with proper academic tone and organization.", status: "online", tasks: 12, avgScore: 84, color: C.inkMid, icon: "◐", usage: 12 },
-];
-
-const activityLog = [
-  { agent: "Summarization Agent", action: "Completed summary for 'Transformer Architectures in NLP'", time: "Today, 2:14 PM", color: C.gold },
-  { agent: "Literature Review Agent", action: "Started comparative analysis for BERT vs GPT study", time: "Today, 3:01 PM", color: C.sienna },
-  { agent: "Citation Agent", action: "Extracted 4 citations in APA format", time: "Yesterday, 4:22 PM", color: C.umber },
-  { agent: "Summarization Agent", action: "Completed summary for 'Federated Learning Survey'", time: "Yesterday, 11:15 AM", color: C.gold },
-  { agent: "Proposal Drafting Agent", action: "Generated proposal draft for RL in Robotics", time: "3 days ago", color: C.inkMid },
-  { agent: "Citation Agent", action: "Formatted 12 references in IEEE style", time: "4 days ago", color: C.umber },
+const AGENT_CONFIG: Omit<Agent, "tasks" | "avgScore" | "usage">[] = [
+  { id: "1", name: "Summarization Agent", desc: "Extracts key findings, methodologies, and contributions from research papers into clear, structured summaries.", status: "online", color: C.gold, icon: "◈", agentType: "summarization" },
+  { id: "2", name: "Literature Review Agent", desc: "Analyzes multiple papers to produce comparative reviews, identifying research gaps and thematic connections.", status: "online", color: C.sienna, icon: "◉", agentType: "literature_review" },
+  { id: "3", name: "Citation Agent", desc: "Automatically extracts and formats references in APA, MLA, IEEE, or Chicago style, verified against CrossRef.", status: "online", color: C.umber, icon: "◎", agentType: "citation" },
+  { id: "4", name: "Proposal Drafting Agent", desc: "Transforms research ideas into structured, polished proposals with proper academic tone and organization.", status: "online", color: C.inkMid, icon: "◐", agentType: "proposal" },
 ];
 
 function StatusDot({ status }: { status: Agent["status"] }) {
@@ -71,14 +65,64 @@ function AgentCard({ agent }: { agent: Agent }) {
         </div>
       </div>
 
-      <button className="btn-ink" style={{ width: "100%", padding: "9px 0", fontSize: 11.5 }} onClick={() => alert(agent.status === "busy" ? "Viewing progress for " + agent.name : "Running " + agent.name + "…")}>
-        {agent.status === "busy" ? "View Progress" : "Run Agent"}
+      <button className="btn-ink" style={{ width: "100%", padding: "9px 0", fontSize: 11.5 }}>
+        Run Agent
       </button>
     </div>
   );
 }
 
 export default function Agents() {
+  const [dbTasks, setDbTasks] = useState<DBTask[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    let unsubTasks: (() => void) | undefined;
+    let unsubLogs: (() => void) | undefined;
+
+    getCurrentUserId().then(uid => {
+      if (uid) {
+        unsubTasks = subscribeToTasks(uid, setDbTasks);
+        
+        // Manual subscription for agent_logs (only user's logs)
+        const channelId = Math.random().toString(36).substring(2, 10);
+        const channel = supabase
+          .channel(`user_agent_logs_${channelId}`)
+          .on("postgres_changes", { event: "INSERT", schema: "public", table: "agent_logs", filter: `user_id=eq.${uid}` }, 
+            payload => { if (isMounted) setLogs(prev => [payload.new, ...prev].slice(0, 10)); }
+          )
+          .subscribe();
+        
+        supabase.from("agent_logs").select("*").eq("user_id", uid).order("created_at", { ascending: false }).limit(10)
+          .then(({ data }) => { if (isMounted) setLogs(data || []); });
+
+        unsubLogs = () => supabase.removeChannel(channel);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubTasks?.();
+      unsubLogs?.();
+    };
+  }, []);
+
+  const agents: Agent[] = AGENT_CONFIG.map(cfg => {
+    const agentTasks = dbTasks.filter(t => t.agent_type === cfg.agentType);
+    const completed = agentTasks.filter(t => t.status === "completed");
+    const avg = completed.length > 0 ? Math.round(completed.reduce((acc, t) => acc + (t.quality_score || 0), 0) / completed.length) : 0;
+    const usage = dbTasks.length > 0 ? Math.round((agentTasks.length / dbTasks.length) * 100) : 0;
+    
+    return {
+      ...cfg,
+      tasks: completed.length,
+      avgScore: avg,
+      usage: usage,
+      status: agentTasks.some(t => t.status === "processing") ? "busy" : "online"
+    };
+  });
+
   return (
     <>
       <div className="fade-1" style={{ marginBottom: 28 }}>
@@ -106,17 +150,27 @@ export default function Agents() {
           <span style={{ ...sectionLabel }}>Agent Activity Log</span>
         </div>
         <div style={{ ...cardBase, padding: "20px 22px" }}>
-          {activityLog.map((a, i) => (
-            <div key={i} style={{ display: "flex", gap: 12, padding: "12px 0", borderBottom: i < activityLog.length - 1 ? `1px solid ${C.border}` : "none" }}>
-              <div style={{ width: 30, height: 30, borderRadius: "50%", background: `${a.color}18`, border: `1px solid ${a.color}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>⚡</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13.5, color: C.inkDark, lineHeight: 1.5 }}>
-                  <strong style={{ color: a.color }}>{a.agent}</strong> — {a.action}
+          {logs.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 0", ...bodyText, fontSize: 14 }}>No recent activity.</div>
+          ) : (
+            logs.map((a, i) => {
+              const cfg = AGENT_CONFIG.find(c => c.name.includes(a.agent) || c.agentType === a.agent);
+              const color = cfg?.color || C.gold;
+              return (
+                <div key={a.id || i} style={{ display: "flex", gap: 12, padding: "12px 0", borderBottom: i < logs.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                  <div style={{ width: 30, height: 30, borderRadius: "50%", background: `${color}18`, border: `1px solid ${color}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>
+                    {a.level === "error" ? "⚠" : "⚡"}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13.5, color: C.inkDark, lineHeight: 1.5 }}>
+                      <strong style={{ color: color }}>{a.agent}</strong> — {a.message}
+                    </div>
+                    <div style={{ ...bodyText, fontSize: 11, marginTop: 2 }}>{new Date(a.created_at).toLocaleString()}</div>
+                  </div>
                 </div>
-                <div style={{ ...bodyText, fontSize: 11, marginTop: 2 }}>{a.time}</div>
-              </div>
-            </div>
-          ))}
+              );
+            })
+          )}
         </div>
       </div>
     </>

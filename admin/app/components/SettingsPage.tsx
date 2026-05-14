@@ -108,32 +108,6 @@ export default function SettingsPage() {
             <button className="btn-ink" style={{ marginTop: 8 }} onClick={() => showToast("General settings saved")}>Save General</button>
           </SettingCard>
 
-          {/* AI/LLM */}
-          <SettingCard title="AI & LLM Configuration">
-            <Field label="Default LLM Model">
-              <select style={selectStyle} value={model} onChange={e => setModel(e.target.value)}>
-                <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-                <option value="gpt-4">GPT-4</option>
-                <option value="gpt-4o">GPT-4o</option>
-                <option value="gpt-4o-mini">GPT-4o Mini</option>
-              </select>
-            </Field>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <Field label="Temperature (0–1)">
-                <input style={inputStyle} type="number" step="0.1" min="0" max="1" value={temperature} onChange={e => setTemperature(e.target.value)} />
-              </Field>
-              <Field label="Max Tokens">
-                <input style={inputStyle} type="number" value={maxTokens} onChange={e => setMaxTokens(e.target.value)} />
-              </Field>
-            </div>
-            <SettingRow label="Streaming Responses" sub="Enable token streaming for real-time LLM output">
-              <Toggle value={streamEnabled} onChange={setStreamEnabled} />
-            </SettingRow>
-            <div style={{ marginTop: 14 }}>
-              <button className="btn-ghost" onClick={() => setShowApiKey(true)}>🔑 Rotate OpenAI API Key</button>
-            </div>
-          </SettingCard>
-
           {/* RAG */}
           <SettingCard title="RAG & ChromaDB">
             <Field label="Embedding Model">

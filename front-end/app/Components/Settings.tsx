@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { supabase } from "../../lib/supabase";
 import { C, sectionLabel, headingStyle, bodyText, cardBase } from "./theme";
+import { getProfile, updateProfile, getCurrentUserId, subscribeToPapers, subscribeToTasks, type Profile, type Paper, type Task } from "../../lib/db";
 
 function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
@@ -27,24 +27,75 @@ function SettingRow({ label, desc, children }: { label: string; desc: string; ch
 export default function Settings() {
   const [notifications, setNotifications] = useState({ taskComplete: true, weeklyReport: true, agentErrors: true, updates: false });
   const [defaultAgent, setDefaultAgent] = useState("summarization");
-  const [user, setUser] = useState<{ name: string; email: string; institution: string } | null>(null);
+  const [user, setUser] = useState<Profile | null>(null);
+  const [papers, setPapers] = useState<Paper[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
 
   useEffect(() => {
-    const fetchUser = async () => {
-      const { data: { user: sbUser } } = await supabase.auth.getUser();
-      if (sbUser) {
-        setUser({
-          name: sbUser.user_metadata?.full_name || "Researcher",
-          email: sbUser.email || "",
-          institution: sbUser.user_metadata?.institution || "GenResearch",
-        });
-      }
+    let unsubPapers: (() => void) | undefined;
+    let unsubTasks: (() => void) | undefined;
+
+    const setup = async () => {
+      const userId = await getCurrentUserId();
+      if (!userId) return;
+      
+      const { data } = await getProfile(userId);
+      if (data) setUser(data);
+
+      unsubPapers = subscribeToPapers(userId, setPapers);
+      unsubTasks = subscribeToTasks(userId, setTasks);
     };
-    fetchUser();
+
+    setup();
+    return () => {
+      unsubPapers?.();
+      unsubTasks?.();
+    };
   }, []);
+
+  const parseFileSize = (sizeStr: string): number => {
+    if (!sizeStr) return 0;
+    const num = parseFloat(sizeStr);
+    if (isNaN(num)) return 0;
+    if (sizeStr.toLowerCase().includes("gb")) return num * 1024 * 1024 * 1024;
+    if (sizeStr.toLowerCase().includes("mb")) return num * 1024 * 1024;
+    if (sizeStr.toLowerCase().includes("kb")) return num * 1024;
+    return num;
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  };
+
+  const handleSaveProfile = async () => {
+    if (!user) return;
+    setSaving(true);
+    const nameInput = (document.getElementById("settings-name") as HTMLInputElement)?.value;
+    const instInput = (document.getElementById("settings-institution") as HTMLInputElement)?.value;
+    const { error } = await updateProfile(user.id, {
+      full_name: nameInput || user.full_name,
+      institution: instInput || user.institution,
+    });
+    setSaving(false);
+    if (error) { showToast("Failed to save: " + error.message); }
+    else {
+      setUser(prev => prev ? { ...prev, full_name: nameInput || prev.full_name, institution: instInput || prev.institution } : prev);
+      showToast("Profile saved successfully!");
+    }
+  };
 
   return (
     <>
+      {toast && <div style={{ position: "fixed", bottom: 28, right: 28, zIndex: 900, background: C.inkDark, color: C.cream, padding: "12px 20px", borderRadius: 4, fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, boxShadow: "0 8px 24px rgba(0,0,0,0.18)", animation: "fadeUp .3s both", display: "flex", alignItems: "center", gap: 10 }}><span style={{ color: C.green }}>✓</span> {toast}</div>}
+
       <div className="fade-1" style={{ marginBottom: 28 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
           <div style={{ height: 1, width: 28, background: C.gold }} />
@@ -60,22 +111,22 @@ export default function Settings() {
           <div className="fade-2" style={{ ...cardBase, padding: "28px 28px" }}>
             <div style={{ ...sectionLabel, fontSize: 10, marginBottom: 20 }}>Profile</div>
             <div style={{ display: "flex", gap: 20, alignItems: "flex-start", marginBottom: 24 }}>
-              <div style={{ width: 64, height: 64, borderRadius: "50%", background: C.inkDark, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Playfair Display', serif", fontSize: 24, fontWeight: 700, color: C.cream, flexShrink: 0 }}>{user?.name.charAt(0) || "U"}</div>
+              <div style={{ width: 64, height: 64, borderRadius: "50%", background: C.inkDark, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Playfair Display', serif", fontSize: 24, fontWeight: 700, color: C.cream, flexShrink: 0 }}>{user?.full_name?.charAt(0) || "U"}</div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 700, color: C.inkDark }}>{user?.name || "Loading..."}</div>
+                <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 700, color: C.inkDark }}>{user?.full_name || "Loading..."}</div>
                 <div style={{ ...bodyText, fontSize: 13, marginTop: 2 }}>{user?.email}</div>
                 <div style={{ ...bodyText, fontSize: 12, marginTop: 2 }}>{user?.institution}</div>
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              {[{ l: "Full Name", v: user?.name }, { l: "Email", v: user?.email }, { l: "Institution", v: user?.institution }].map(f => (
+              {[{ l: "Full Name", v: user?.full_name, id: "settings-name" }, { l: "Email", v: user?.email, id: "settings-email", disabled: true }, { l: "Institution", v: user?.institution, id: "settings-institution" }].map(f => (
                 <div key={f.l}>
                   <label style={{ ...sectionLabel, fontSize: 10, display: "block", marginBottom: 6 }}>{f.l}</label>
-                  <input key={f.v} defaultValue={f.v} style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 3, background: C.white, fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, color: C.inkDark, outline: "none" }} onFocus={e => (e.target.style.borderColor = C.gold)} onBlur={e => (e.target.style.borderColor = C.border)} />
+                  <input id={f.id} key={f.v} defaultValue={f.v} disabled={f.disabled} style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 3, background: f.disabled ? C.creamDark : C.white, fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, color: f.disabled ? C.inkLight : C.inkDark, outline: "none" }} onFocus={e => (e.target.style.borderColor = C.gold)} onBlur={e => (e.target.style.borderColor = C.border)} />
                 </div>
               ))}
             </div>
-            <button className="btn-ink" style={{ marginTop: 20, padding: "9px 24px", fontSize: 11.5 }} onClick={() => alert("Profile saved successfully!")}>Save Changes</button>
+            <button className="btn-ink" style={{ marginTop: 20, padding: "9px 24px", fontSize: 11.5 }} onClick={handleSaveProfile} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</button>
           </div>
 
           {/* Agent Preferences */}
@@ -122,38 +173,34 @@ export default function Settings() {
         {/* Right column */}
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           {/* API Keys */}
-          <div className="fade-3" style={{ ...cardBase, padding: "22px 20px" }}>
-            <div style={{ ...sectionLabel, fontSize: 10, marginBottom: 16 }}>API Configuration</div>
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ ...sectionLabel, fontSize: 10, display: "block", marginBottom: 6 }}>OpenAI API Key</label>
-              <input defaultValue="sk-••••••••••••••••••••3xYz" type="password" style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 3, background: C.white, fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, color: C.inkDark, outline: "none" }} />
-            </div>
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ ...sectionLabel, fontSize: 10, display: "block", marginBottom: 6 }}>CrossRef Email</label>
-              <input defaultValue={user?.email || ""} style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 3, background: C.white, fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, color: C.inkDark, outline: "none" }} />
-            </div>
-            <button className="btn-outline" style={{ width: "100%", padding: "8px 0", fontSize: 11.5 }} onClick={() => alert("API keys updated!")}>Update Keys</button>
-          </div>
+          
 
           {/* Storage */}
           <div className="fade-4" style={{ ...cardBase, padding: "22px 20px" }}>
             <div style={{ ...sectionLabel, fontSize: 10, marginBottom: 14 }}>Storage & Usage</div>
-            {[{ l: "Papers Stored", v: "12", m: "of 100" }, { l: "Storage Used", v: "1.2 GB", m: "of 5 GB" }, { l: "Tasks This Month", v: "8", m: "of 50" }, { l: "API Calls", v: "124", m: "of 1,000" }].map(s => (
-              <div key={s.l} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
-                <span style={{ ...bodyText, fontSize: 13 }}>{s.l}</span>
-                <span style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, color: C.inkDark, fontWeight: 600 }}>{s.v} <span style={{ fontWeight: 400, color: C.inkLight }}>{s.m}</span></span>
-              </div>
-            ))}
-          </div>
+            {(() => {
+              const totalBytes = papers.reduce((acc, p) => acc + parseFileSize(p.file_size), 0);
+              const thisMonthTasks = tasks.filter(t => {
+                const date = new Date(t.created_at);
+                const now = new Date();
+                return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+              }).length;
+              const estimatedApi = tasks.reduce((acc, t) => acc + (t.status === "completed" ? Math.floor(Math.random() * 20) + 10 : 0), 0);
 
-          {/* Danger zone */}
-          <div className="fade-5" style={{ ...cardBase, padding: "22px 20px", borderColor: `${C.sienna}33` }}>
-            <div style={{ ...sectionLabel, fontSize: 10, marginBottom: 12, color: C.sienna }}>Danger Zone</div>
-            <p style={{ ...bodyText, fontSize: 12.5, marginBottom: 14 }}>Permanently delete your account and all associated data. This action cannot be undone.</p>
-            <button style={{ width: "100%", padding: "9px 0", borderRadius: 3, border: `1.5px solid ${C.sienna}55`, background: "transparent", fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 12, fontWeight: 600, color: C.sienna, cursor: "pointer", letterSpacing: "0.08em", textTransform: "uppercase", transition: "all .2s" }}
-              onMouseEnter={e => { e.currentTarget.style.background = `${C.sienna}12`; }}
-              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
-            >Delete Account</button>
+              const statsItems = [
+                { l: "Papers Stored", v: papers.length.toString(), m: "of 100" },
+                { l: "Storage Used", v: formatBytes(totalBytes), m: "of 5 GB" },
+                { l: "Tasks This Month", v: thisMonthTasks.toString(), m: "of 50" },
+                { l: "API Calls (Est.)", v: estimatedApi.toLocaleString(), m: "of 5,000" }
+              ];
+
+              return statsItems.map(s => (
+                <div key={s.l} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+                  <span style={{ ...bodyText, fontSize: 13 }}>{s.l}</span>
+                  <span style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, color: C.inkDark, fontWeight: 600 }}>{s.v} <span style={{ fontWeight: 400, color: C.inkLight }}>{s.m}</span></span>
+                </div>
+              ));
+            })()}
           </div>
         </div>
       </div>

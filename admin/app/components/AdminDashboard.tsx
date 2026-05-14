@@ -1,11 +1,11 @@
 "use client";
 import { useState, useEffect } from "react";
 import { C, globalStyles } from "./shared";
+import { subscribeToPlatformStats, subscribeToSystemAlerts, subscribeToAgentLogs, type PlatformStats, type SystemAlert, type AgentLog } from "../../lib/db";
 import OverviewPage from "./OverviewPage";
 import UsersPage from "./UsersPage";
 import AgentsPage from "./AgentsPage";
 import DocumentsPage from "./DocumentsPage";
-import CostsPage from "./CostsPage";
 import LogsPage from "./LogsPage";
 import SettingsPage from "./SettingsPage";
 import AlertsPage from "./AlertsPage";
@@ -38,19 +38,33 @@ export default function AdminDashboard() {
   const [scrolled, setScrolled]   = useState(false);
   const [clock, setClock]         = useState("");
   const [user, setUser]           = useState<{ name: string } | null>(null);
+  const [stats, setStats]         = useState<PlatformStats>({ total_users: 0, total_papers: 0, total_tasks_completed: 0, active_tasks: 0, total_citations: 0 });
+  const [alerts, setAlerts]       = useState<SystemAlert[]>([]);
+  const [logs, setLogs]           = useState<AgentLog[]>([]);
 
   useEffect(() => {
+    let isMounted = true;
     const fetchUser = async () => {
       const { data: { user: sbUser } } = await supabase.auth.getUser();
-      if (sbUser) {
+      if (sbUser && isMounted) {
         setUser({ name: sbUser.user_metadata?.full_name || "Admin" });
       }
     };
     fetchUser();
 
+    const unsubStats = subscribeToPlatformStats(setStats);
+    const unsubAlerts = subscribeToSystemAlerts(setAlerts);
+    const unsubLogs = subscribeToAgentLogs(setLogs);
+
     const onScroll = () => setScrolled(window.scrollY > 10);
     window.addEventListener("scroll", onScroll);
-    return () => window.removeEventListener("scroll", onScroll);
+    return () => {
+      isMounted = false;
+      window.removeEventListener("scroll", onScroll);
+      unsubStats();
+      unsubAlerts();
+      unsubLogs();
+    };
   }, []);
 
   useEffect(() => {
@@ -64,13 +78,12 @@ export default function AdminDashboard() {
 
   const navItems: NavItem[] = [
     { id:"Overview",       icon:"⌂",  label:"Overview" },
-    { id:"Users",          icon:"👥", label:"User Management",  badge:3 },
+    { id:"Users",          icon:"👥", label:"User Management",  badge: stats.total_users },
     { id:"Agents",         icon:"⚙",  label:"Agent Monitor" },
     { id:"Documents",      icon:"📄", label:"Documents & Index" },
-    { id:"Costs",          icon:"$",  label:"API Cost Tracker" },
-    { id:"Logs",           icon:"📋", label:"System Logs",      badge:2 },
+    { id:"Logs",           icon:"📋", label:"System Logs",      badge: logs.length },
     { id:"Settings",       icon:"◌",  label:"Settings" },
-    { id:"Alerts",         icon:"🔔", label:"Alerts",           badge:1, danger:true },
+    { id:"Alerts",         icon:"🔔", label:"Alerts",           badge: alerts.filter(a => a.status === "active").length, danger:true },
   ];
 
   const renderPage = () => {
@@ -79,7 +92,6 @@ export default function AdminDashboard() {
       case "Users": return <UsersPage />;
       case "Agents": return <AgentsPage />;
       case "Documents": return <DocumentsPage />;
-      case "Costs": return <CostsPage />;
       case "Logs": return <LogsPage />;
       case "Settings": return <SettingsPage />;
       case "Alerts": return <AlertsPage />;
