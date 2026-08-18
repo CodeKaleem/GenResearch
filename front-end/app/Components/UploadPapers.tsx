@@ -111,16 +111,26 @@ export default function UploadPapers() {
   return (
     <>
       <div className="fade-1" style={{ marginBottom: 32 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-          <div style={{ height: 1, width: 28, background: C.gold }} />
-          <span style={{ ...sectionLabel }}>Document Ingestion</span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <div style={{ height: 1, width: 28, background: C.gold }} />
+              <span style={{ ...sectionLabel }}>Document Ingestion</span>
+            </div>
+            <h1 style={{ ...headingStyle, fontSize: "clamp(24px, 3vw, 34px)" }}>
+              Upload <em style={{ color: C.gold }}>Papers</em>
+            </h1>
+            <p style={{ ...bodyText, fontSize: 15, marginTop: 6, maxWidth: 540 }}>
+              Upload research papers for processing. Supported format: PDF. Maximum file size: 25 MB.
+            </p>
+          </div>
+          <div style={{ padding: "12px 18px", background: C.creamDark, border: `1px solid ${C.border}`, borderRadius: 4, textAlign: "right" }}>
+            <div style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 11, fontWeight: 700, color: C.gold, textTransform: "uppercase", letterSpacing: "0.1em" }}>Account Quota</div>
+            <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 800, color: dbPapers.length >= 20 ? C.sienna : C.inkDark, marginTop: 2 }}>
+              {dbPapers.length} / 20 <span style={{ fontSize: 12, fontWeight: 400, color: C.inkLight }}>Papers</span>
+            </div>
+          </div>
         </div>
-        <h1 style={{ ...headingStyle, fontSize: "clamp(24px, 3vw, 34px)" }}>
-          Upload <em style={{ color: C.gold }}>Papers</em>
-        </h1>
-        <p style={{ ...bodyText, fontSize: 15, marginTop: 6, maxWidth: 540 }}>
-          Upload research papers for processing. Supported formats: PDF, DOCX, TXT. Maximum file size: 25 MB.
-        </p>
       </div>
 
       <div className="fade-2" style={{ display: "flex", gap: 12, marginBottom: 20 }}>
