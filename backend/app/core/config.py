@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "GenResearch"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
-    SECRET_KEY: str
+    SECRET_KEY: str = "super-secret-key-for-dev"
 
     # LLM
     OLLAMA_BASE_URL: str = "http://localhost:11434"
@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"
 
 
 # Single instance used across the entire app
