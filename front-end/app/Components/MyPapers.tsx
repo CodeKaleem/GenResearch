@@ -22,6 +22,14 @@ function StatusBadge({ status }: { status: Paper["status"] }) {
 
 function PaperCard({ paper }: { paper: Paper }) {
   const [hov, setHov] = useState(false);
+
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const uid = await getCurrentUserId();
+    if (!uid) return alert("Session expired.");
+    window.open(`http://localhost:8000/papers/${paper.id}/download?user_id=${uid}`, "_blank");
+  };
+
   return (
     <div onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)} style={{ ...cardBase, padding: "22px", background: hov ? C.white : C.creamLight, borderColor: hov ? C.borderGold : C.border, transform: hov ? "translateY(-3px)" : "none", boxShadow: hov ? `0 8px 24px ${C.shadow}` : "none", cursor: "pointer" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -30,12 +38,27 @@ function PaperCard({ paper }: { paper: Paper }) {
       </div>
       <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 15, fontWeight: 700, color: C.inkDark, lineHeight: 1.3, marginBottom: 8, minHeight: 40 }}>{paper.title}</div>
       <div style={{ ...bodyText, fontSize: 12.5, marginBottom: 8 }}>{paper.authors}</div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
         <span style={{ ...bodyText, fontSize: 12 }}>{paper.pages} pages</span>
         <span style={{ ...bodyText, fontSize: 11 }}>{paper.addedDate}</span>
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-        {paper.tags.map(t => <span key={t} style={{ padding: "2px 8px", borderRadius: 2, background: C.goldFaint, border: `1px solid ${C.gold}22`, fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 10.5, color: C.gold }}>{t}</span>)}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          {paper.tags.map(t => <span key={t} style={{ padding: "2px 8px", borderRadius: 2, background: C.goldFaint, border: `1px solid ${C.gold}22`, fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 10.5, color: C.gold }}>{t}</span>)}
+        </div>
+        <button
+          onClick={handleDownload}
+          title="Download PDF"
+          style={{
+            padding: "4px 10px", borderRadius: 3, border: `1px solid ${C.gold}55`,
+            background: C.goldFaint, color: C.gold, fontFamily: "'Crimson Pro', Georgia, serif",
+            fontSize: 11, fontWeight: 600, cursor: "pointer", transition: "all .2s"
+          }}
+          onMouseEnter={(e) => { (e.target as HTMLButtonElement).style.background = C.gold; (e.target as HTMLButtonElement).style.color = C.white; }}
+          onMouseLeave={(e) => { (e.target as HTMLButtonElement).style.background = C.goldFaint; (e.target as HTMLButtonElement).style.color = C.gold; }}
+        >
+          ⬇ PDF
+        </button>
       </div>
     </div>
   );

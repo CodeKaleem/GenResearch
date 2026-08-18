@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import UploadPapers from "./UploadPapers";
 import MyPapers from "./MyPapers";
+import Chat from "./Chat";
 import Agents from "./Agents";
 import Results from "./Results";
 import Citations from "./Citations";
@@ -218,6 +219,15 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
   const [dbTasks, setDbTasks] = useState<DBTask[]>([]);
   const [dbPapers, setDbPapers] = useState<DBPaper[]>([]);
   const [dbResults, setDbResults] = useState<DBResult[]>([]);
+  const [notifications, setNotifications] = useState<{ id: string; message: string; type: "success" | "error" | "info" }[]>([]);
+
+  const addNotification = (message: string, type: "success" | "error" | "info" = "info") => {
+    const id = Math.random().toString(36).substr(2, 9);
+    setNotifications(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 5000);
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -230,8 +240,26 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
       if (data && isMounted) setUser({ name: data.full_name || "Researcher", institution: data.institution || "GenResearch" });
 
       if (isMounted) {
-        unsubs.push(subscribeToTasks(userId, setDbTasks));
-        unsubs.push(subscribeToPapers(userId, setDbPapers));
+        unsubs.push(subscribeToTasks(userId, (tasks) => {
+          setDbTasks(prev => {
+            if (prev.length > 0 && tasks.length > prev.length) {
+              const newT = tasks[0];
+              if (newT.status === "completed") addNotification(`Task "${newT.title}" completed successfully!`, "success");
+              else if (newT.status === "failed") addNotification(`Task "${newT.title}" encountered an error.`, "error");
+            }
+            return tasks;
+          });
+        }));
+
+        unsubs.push(subscribeToPapers(userId, (papers) => {
+          setDbPapers(prev => {
+            if (prev.length > 0 && papers.length > prev.length) {
+              addNotification(`Paper "${papers[0].title}" processed & indexed!`, "success");
+            }
+            return papers;
+          });
+        }));
+
         unsubs.push(subscribeToResults(userId, setDbResults));
       }
     };
@@ -271,6 +299,7 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
     { icon: "⌂", label: "Dashboard" },
     { icon: "↑", label: "Upload Papers" },
     { icon: "⬡", label: "My Papers", badge: dbPapers.length || undefined },
+    { icon: "💬", label: "Ask AI" },
     { icon: "⚙", label: "Agents" },
     { icon: "◈", label: "Results", badge: dbResults.length || undefined },
     { icon: "◎", label: "Citations" },
@@ -312,6 +341,7 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
         @keyframes fadeUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
         @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
         .btn-gold{background:#8b6914;color:#fffef9;border:none;border-radius:3px;padding:10px 22px;font-size:12.5px;font-family:'Crimson Pro',Georgia,serif;font-weight:600;cursor:pointer;letter-spacing:.08em;text-transform:uppercase;transition:all .25s}
+        .btn-ink{background:#2c1f0e;color:#fffef9;border:none;border-radius:3px;padding:10px 22px;font-size:12.5px;font-family:'Crimson Pro',Georgia,serif;font-weight:600;cursor:pointer;letter-spacing:.08em;text-transform:uppercase;transition:all .25s}
         .btn-outline{background:transparent;color:#2c1f0e;border:1.5px solid rgba(44,31,14,0.25);border-radius:3px;padding:8px 18px;font-size:12px;font-family:'Crimson Pro',Georgia,serif;font-weight:500;cursor:pointer;transition:all .25s}
         .fade-1{animation:fadeUp .6s .05s both} .fade-2{animation:fadeUp .6s .12s both}
       `}</style>
@@ -387,6 +417,7 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
           <>
             {activeNav === "Upload Papers" && <UploadPapers />}
             {activeNav === "My Papers" && <MyPapers />}
+            {activeNav === "Ask AI" && <Chat />}
             {activeNav === "Agents" && <Agents />}
             {activeNav === "Results" && <Results />}
             {activeNav === "Citations" && <Citations />}
@@ -395,6 +426,16 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
           </>
         )}
       </main>
+
+      {/* Real-time Notification Toast Container */}
+      <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 9999, display: "flex", flexDirection: "column", gap: 10, maxWidth: 360, pointerEvents: "none" }}>
+        {notifications.map(n => (
+          <div key={n.id} className="fade-1" style={{ pointerEvents: "auto", padding: "14px 18px", borderRadius: 4, background: n.type === "success" ? C.creamLight : n.type === "error" ? "rgba(160,82,45,0.95)" : C.inkDark, border: `1px solid ${n.type === "success" ? C.green : n.type === "error" ? C.sienna : C.gold}`, color: n.type === "error" ? C.white : n.type === "success" ? C.inkDark : C.cream, boxShadow: "0 8px 24px rgba(0,0,0,0.18)", fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13.5, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 16 }}>{n.type === "success" ? "✓" : n.type === "error" ? "⚠" : "ℹ"}</span>
+            <span style={{ flex: 1 }}>{n.message}</span>
+          </div>
+        ))}
+      </div>
     </>
   );
 }
