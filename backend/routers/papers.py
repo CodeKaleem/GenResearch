@@ -4,14 +4,24 @@
 # Sync metadata to Supabase papers table
 # ============================================================
 import uuid
+import logging
+import os
+from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi.responses import FileResponse
 from database.supabase_client import get_supabase
 from services.pdf_extractor import extract_text_from_pdf, get_pdf_page_count
 from services.chunker import chunk_text
 from services.chroma_service import store_chunks, delete_paper_chunks
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/papers", tags=["papers"])
 
+STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage" / "pdfs"
+STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+MAX_PAPERS_PER_USER = 20
 
 def _format_file_size(size_bytes: int) -> str:
     """Convert bytes to a human-readable string."""
@@ -21,6 +31,28 @@ def _format_file_size(size_bytes: int) -> str:
         return f"{size_bytes / 1024:.1f} KB"
     else:
         return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+def _check_user_quota(sb, user_id: str):
+    """Enforce user quota: max 20 papers."""
+    res = sb.table("papers").select("id").eq("user_id", user_id).execute()
+    papers = res.data or []
+    if len(papers) >= MAX_PAPERS_PER_USER:
+        raise HTTPException(
+            status_code=400,
+            detail=f"User quota exceeded: Maximum {MAX_PAPERS_PER_USER} papers allowed per account.",
+        )
+
+
+def _save_pdf_file(user_id: str, paper_id: str, file_bytes: bytes) -> str:
+    """Save raw PDF file to server storage."""
+    user_dir = STORAGE_DIR / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    file_path = user_dir / f"{paper_id}.pdf"
+    with open(file_path, "wb") as f:
+        f.write(file_bytes)
+    return str(file_path)
+
 
 
 # ── POST /papers/upload ──────────────────────────────────────
@@ -52,6 +84,9 @@ async def upload_paper(
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
     sb = get_supabase()
+    _check_user_quota(sb, user_id)
+
+    storage_path = _save_pdf_file(user_id, paper_id, file_bytes)
 
     # Step 1: Insert into Supabase with status='processing'
     try:
@@ -67,6 +102,7 @@ async def upload_paper(
             "collection": collection,
             "status": "processing",
             "chunks": 0,
+            "storage_path": storage_path,
         }).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase insert failed: {e}")
@@ -124,6 +160,9 @@ async def upload_batch(
     tags: str = Form(""),
 ):
     """Upload multiple PDFs at once. Each file is processed independently."""
+    sb = get_supabase()
+    _check_user_quota(sb, user_id)
+
     results = []
     for file in files:
         try:
@@ -142,7 +181,7 @@ async def upload_batch(
             paper_title = (file.filename or "Untitled").rsplit(".", 1)[0]
             tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
-            sb = get_supabase()
+            storage_path = _save_pdf_file(user_id, paper_id, file_bytes)
 
             sb.table("papers").insert({
                 "id": paper_id,
@@ -156,6 +195,7 @@ async def upload_batch(
                 "collection": collection,
                 "status": "processing",
                 "chunks": 0,
+                "storage_path": storage_path,
             }).execute()
 
             text = await extract_text_from_pdf(file_bytes)
@@ -195,6 +235,13 @@ async def upload_batch(
             })
 
         except Exception as e:
+            logger.error(f"Error processing batch upload for {file.filename}: {e}", exc_info=True)
+            if 'paper_id' in locals() and 'sb' in locals():
+                try:
+                    sb.table("papers").update({"status": "failed"}).eq("id", paper_id).execute()
+                except Exception as update_error:
+                    logger.error(f"Failed to update status to 'failed' for {paper_id}: {update_error}")
+            
             results.append({
                 "file_name": file.filename,
                 "status": "failed",
@@ -213,13 +260,21 @@ async def delete_paper(paper_id: str, user_id: str):
     sb = get_supabase()
 
     # Verify paper exists and belongs to user
-    result = sb.table("papers").select("id, user_id").eq("id", paper_id).execute()
+    result = sb.table("papers").select("id, user_id, storage_path").eq("id", paper_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Paper not found.")
 
     paper = result.data[0]
     if paper["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to delete this paper.")
+
+    # Remove stored PDF file if it exists
+    storage_path = paper.get("storage_path") or str(STORAGE_DIR / user_id / f"{paper_id}.pdf")
+    if os.path.exists(storage_path):
+        try:
+            os.remove(storage_path)
+        except Exception as err:
+            logger.warning(f"Could not remove PDF file {storage_path}: {err}")
 
     # Delete chunks from ChromaDB
     deleted_chunks = delete_paper_chunks(user_id, paper_id)
@@ -228,6 +283,23 @@ async def delete_paper(paper_id: str, user_id: str):
     sb.table("papers").delete().eq("id", paper_id).execute()
 
     return {"deleted": True, "paper_id": paper_id, "chunks_removed": deleted_chunks}
+
+
+# ── GET /papers/{paper_id}/download ──────────────────────────
+@router.get("/{paper_id}/download")
+async def download_paper(paper_id: str, user_id: str):
+    """Serve the stored PDF file for download."""
+    sb = get_supabase()
+    res = sb.table("papers").select("id, user_id, file_name, storage_path").eq("id", paper_id).eq("user_id", user_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Paper not found.")
+
+    paper = res.data[0]
+    file_path = paper.get("storage_path") or str(STORAGE_DIR / user_id / f"{paper_id}.pdf")
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="PDF file not found on server storage.")
+
+    return FileResponse(path=file_path, filename=paper.get("file_name", "paper.pdf"), media_type="application/pdf")
 
 
 # ── GET /papers/ ─────────────────────────────────────────────

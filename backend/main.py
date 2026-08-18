@@ -6,11 +6,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from routers.papers import router as papers_router
+from routers.chat import router as chat_router
+from routers.agent_tasks import router as agent_tasks_router
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="Vector database pipeline: Upload PDFs → Extract → Chunk → Embed → Store in ChromaDB",
+    description="Vector database pipeline with RAG: Upload PDFs → Extract → Chunk → Embed → Store → Ask Questions",
 )
 
 # ── CORS ──────────────────────────────────────────────────────
@@ -24,6 +26,8 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────
 app.include_router(papers_router)
+app.include_router(chat_router)
+app.include_router(agent_tasks_router)
 
 
 # ── Health Check ──────────────────────────────────────────────

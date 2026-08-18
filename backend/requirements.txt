@@ -5,5 +5,7 @@ pymupdf
 chromadb
 supabase
 langchain-text-splitters
+langchain-core
+langgraph
 httpx
 python-dotenv
