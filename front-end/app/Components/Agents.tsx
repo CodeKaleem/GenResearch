@@ -5,6 +5,11 @@ import { C, sectionLabel, headingStyle, bodyText, cardBase } from "./theme";
 import { getCurrentUserId, subscribeToTasks, type Task as DBTask } from "../../lib/db";
 import { supabase } from "../../lib/supabase";
 
+import SummarizationScreen from "./SummarizationScreen";
+import LiteratureReviewScreen from "./LiteratureReviewScreen";
+import CitationScreen from "./CitationScreen";
+import ProposalDraftScreen from "./ProposalDraftScreen";
+
 interface Agent {
   id: string; name: string; desc: string; status: "online" | "busy" | "offline";
   tasks: number; avgScore: number; color: string; icon: string; usage: number;
@@ -15,7 +20,7 @@ const AGENT_CONFIG: Omit<Agent, "tasks" | "avgScore" | "usage">[] = [
   { id: "1", name: "Summarization Agent", desc: "Extracts key findings, methodologies, and contributions from research papers into clear, structured summaries.", status: "online", color: C.gold, icon: "◈", agentType: "summarization" },
   { id: "2", name: "Literature Review Agent", desc: "Analyzes multiple papers to produce comparative reviews, identifying research gaps and thematic connections.", status: "online", color: C.sienna, icon: "◉", agentType: "literature_review" },
   { id: "3", name: "Citation Agent", desc: "Automatically extracts and formats references in APA, MLA, IEEE, or Chicago style, verified against CrossRef.", status: "online", color: C.umber, icon: "◎", agentType: "citation" },
-  { id: "4", name: "Proposal Drafting Agent", desc: "Transforms research ideas into structured, polished proposals with proper academic tone and organization.", status: "online", color: C.inkMid, icon: "◐", agentType: "proposal" },
+  { id: "4", name: "Proposal Drafting Agent", desc: "Transforms research ideas into structured, polished proposals with proper academic tone and organization. Uses LangGraph orchestration.", status: "online", color: C.inkMid, icon: "◐", agentType: "proposal" },
 ];
 
 function StatusDot({ status }: { status: Agent["status"] }) {
@@ -30,7 +35,7 @@ function StatusDot({ status }: { status: Agent["status"] }) {
   );
 }
 
-function AgentCard({ agent }: { agent: Agent }) {
+function AgentCard({ agent, onOpen }: { agent: Agent; onOpen: (type: string) => void }) {
   const [hov, setHov] = useState(false);
   return (
     <div onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)} style={{ ...cardBase, padding: "28px 24px", background: hov ? C.white : C.creamLight, borderColor: hov ? C.borderGold : C.border, transform: hov ? "translateY(-4px)" : "none", boxShadow: hov ? `0 8px 28px ${C.shadow}` : "none", cursor: "default", position: "relative", overflow: "hidden" }}>
@@ -65,14 +70,15 @@ function AgentCard({ agent }: { agent: Agent }) {
         </div>
       </div>
 
-      <button className="btn-ink" style={{ width: "100%", padding: "9px 0", fontSize: 11.5 }}>
-        Run Agent
+      <button onClick={() => onOpen(agent.agentType)} className="btn-ink" style={{ width: "100%", padding: "9px 0", fontSize: 11.5, background: agent.color, borderColor: agent.color }}>
+        Open Agent Workspace
       </button>
     </div>
   );
 }
 
 export default function Agents() {
+  const [activeScreen, setActiveScreen] = useState<string | null>(null);
   const [dbTasks, setDbTasks] = useState<DBTask[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
 
@@ -85,7 +91,6 @@ export default function Agents() {
       if (uid) {
         unsubTasks = subscribeToTasks(uid, setDbTasks);
         
-        // Manual subscription for agent_logs (only user's logs)
         const channelId = Math.random().toString(36).substring(2, 10);
         const channel = supabase
           .channel(`user_agent_logs_${channelId}`)
@@ -107,6 +112,11 @@ export default function Agents() {
       unsubLogs?.();
     };
   }, []);
+
+  if (activeScreen === "summarization") return <SummarizationScreen onBack={() => setActiveScreen(null)} />;
+  if (activeScreen === "literature_review") return <LiteratureReviewScreen onBack={() => setActiveScreen(null)} />;
+  if (activeScreen === "citation") return <CitationScreen onBack={() => setActiveScreen(null)} />;
+  if (activeScreen === "proposal") return <ProposalDraftScreen onBack={() => setActiveScreen(null)} />;
 
   const agents: Agent[] = AGENT_CONFIG.map(cfg => {
     const agentTasks = dbTasks.filter(t => t.agent_type === cfg.agentType);
@@ -135,7 +145,7 @@ export default function Agents() {
       </div>
 
       <div className="fade-2" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 18, marginBottom: 36 }}>
-        {agents.map((a, i) => <div key={a.id} style={{ animation: `fadeUp .6s ${i * 0.08 + 0.1}s both` }}><AgentCard agent={a} /></div>)}
+        {agents.map((a, i) => <div key={a.id} style={{ animation: `fadeUp .6s ${i * 0.08 + 0.1}s both` }}><AgentCard agent={a} onOpen={setActiveScreen} /></div>)}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
