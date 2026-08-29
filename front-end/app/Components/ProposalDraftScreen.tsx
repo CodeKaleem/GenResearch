@@ -17,7 +17,15 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
   const [liveState, setLiveState] = useState<{ current_step: string; steps_log: string[] }>({ current_step: "", steps_log: [] });
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [awaitingApproval, setAwaitingApproval] = useState(false);
+  const [awaitingQuestionnaire, setAwaitingQuestionnaire] = useState(false);
+  const [awaitingScrapePermission, setAwaitingScrapePermission] = useState(false);
+  
+  const [questions, setQuestions] = useState<any[]>([]);
+  const [answers, setAnswers] = useState<Record<string, any>>({});
+  const [approvalComment, setApprovalComment] = useState("");
+  
   const [outline, setOutline] = useState<any>(null);
+  const [sources, setSources] = useState<any[]>([]);
 
   useEffect(() => {
     getCurrentUserId().then(uid => {
@@ -32,7 +40,8 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
 
   const run = async () => {
     if (!userId || selected.size === 0 || !topic.trim()) return;
-    setLoading(true); setResult(null); setActiveTab("logs"); setAwaitingApproval(false);
+    setLoading(true); setResult(null); setActiveTab("logs"); 
+    setAwaitingApproval(false); setAwaitingQuestionnaire(false); setAwaitingScrapePermission(false);
     setLiveState({ current_step: "starting", steps_log: ["⚡ Pipeline started"] });
     
     try {
@@ -76,8 +85,16 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
             if (data.type === "state_update") {
               setLiveState(data.state);
             } else if (data.type === "interrupt") {
-              setAwaitingApproval(true);
-              setOutline(data.outline);
+              if (data.reason === "awaiting_questionnaire") {
+                setAwaitingQuestionnaire(true);
+                setQuestions(data.questions || []);
+              } else if (data.reason === "awaiting_scrape_permission") {
+                setAwaitingScrapePermission(true);
+              } else if (data.reason === "awaiting_approval") {
+                setAwaitingApproval(true);
+                setOutline(data.outline);
+                setSources(data.sources || []);
+              }
               setLoading(false);
               return; // stop reading this stream, wait for user
             } else if (data.type === "done") {
@@ -99,6 +116,34 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
     }
   };
 
+  const submitQuestionnaire = async () => {
+    if (!sessionId) return;
+    setAwaitingQuestionnaire(false);
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/pipeline/${sessionId}/questionnaire`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answers })
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      startStream(sessionId);
+    } catch (e: any) { setResult({ error: e.message }); setLoading(false); }
+  };
+
+  const submitScrapePermission = async (granted: boolean) => {
+    if (!sessionId) return;
+    setAwaitingScrapePermission(false);
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/pipeline/${sessionId}/scrape-permission`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ granted })
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      startStream(sessionId);
+    } catch (e: any) { setResult({ error: e.message }); setLoading(false); }
+  };
+
   const approve = async () => {
     if (!sessionId) return;
     setAwaitingApproval(false);
@@ -106,7 +151,7 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
     try {
       const res = await fetch(`${API}/pipeline/${sessionId}/approve`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approved: true })
+        body: JSON.stringify({ approved: true, approval_comment: approvalComment })
       });
       if (!res.ok) throw new Error(`Error ${res.status}`);
       startStream(sessionId);
@@ -136,6 +181,8 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
   const cancel = async () => {
     setLoading(false);
     setAwaitingApproval(false);
+    setAwaitingQuestionnaire(false);
+    setAwaitingScrapePermission(false);
     setLiveState(prev => ({
       ...prev,
       steps_log: [...(prev.steps_log || []), "⛔ Workflow cancelled by user."]
@@ -235,19 +282,117 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
         )}
       </div>
 
-      {awaitingApproval && (
-        <div className="fade-1" style={{ marginBottom: 32, padding: 24, background: C.creamLight, border: `1px solid ${C.gold}`, borderRadius: 4 }}>
-          <div style={{ ...sectionLabel, color: C.inkDark, marginBottom: 12 }}>Human-in-the-Loop: Approval Required</div>
+      {awaitingQuestionnaire && (
+        <div className="fade-1" style={{ marginBottom: 32, padding: 24, background: C.creamLight, border: `1px solid ${C.inkMid}`, borderRadius: 4 }}>
+          <div style={{ ...sectionLabel, color: C.inkDark, marginBottom: 12 }}>Agent Questionnaire</div>
           <p style={{ ...bodyText, fontSize: 14, marginBottom: 16 }}>
-            The agents have generated the research outline and gathered sources. Please approve to continue to heavy drafting.
+            The orchestrator needs a bit more context about your existing material to proceed effectively.
           </p>
-          <button onClick={approve} style={{ padding: "12px 24px", background: C.gold, color: C.white, border: "none", borderRadius: 4, cursor: "pointer", fontWeight: "bold" }}>
-            Approve & Continue Generation
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 20 }}>
+            {questions.map((q: any) => (
+              <div key={q.id}>
+                <div style={{ ...bodyText, fontSize: 13, fontWeight: "bold", marginBottom: 6 }}>{q.question}</div>
+                {q.hint && <div style={{ ...bodyText, fontSize: 11, color: C.inkLight, marginBottom: 6 }}>{q.hint}</div>}
+                
+                {q.type === "multi_choice" ? (
+                  <select 
+                    value={answers[q.id] || ""} 
+                    onChange={e => setAnswers({ ...answers, [q.id]: e.target.value })}
+                    style={{ padding: "8px 12px", border: `1px solid ${C.border}`, borderRadius: 3, background: C.white, width: "100%", maxWidth: 300 }}
+                  >
+                    <option value="">Select an option...</option>
+                    {q.options?.map((opt: string) => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                ) : q.type === "yes_no" ? (
+                  <div style={{ display: "flex", gap: 12 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, ...bodyText, fontSize: 13 }}>
+                      <input type="radio" name={q.id} checked={answers[q.id] === "yes"} onChange={() => setAnswers({ ...answers, [q.id]: "yes" })} /> Yes
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, ...bodyText, fontSize: 13 }}>
+                      <input type="radio" name={q.id} checked={answers[q.id] === "no"} onChange={() => setAnswers({ ...answers, [q.id]: "no" })} /> No
+                    </label>
+                  </div>
+                ) : (
+                  <textarea 
+                    value={answers[q.id] || ""} 
+                    onChange={e => setAnswers({ ...answers, [q.id]: e.target.value })}
+                    style={{ padding: "8px 12px", border: `1px solid ${C.border}`, borderRadius: 3, background: C.white, width: "100%", minHeight: 60 }}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+          <button onClick={submitQuestionnaire} style={{ padding: "12px 24px", background: C.inkDark, color: C.cream, border: "none", borderRadius: 4, cursor: "pointer", fontWeight: "bold" }}>
+            Submit Answers & Continue
           </button>
         </div>
       )}
 
-      {(loading || result) && !result?.error && !awaitingApproval && (
+      {awaitingScrapePermission && (
+        <div className="fade-1" style={{ marginBottom: 32, padding: 24, background: "rgba(160,82,45,0.08)", border: `1px solid ${C.sienna}44`, borderRadius: 4 }}>
+          <div style={{ ...sectionLabel, color: C.sienna, marginBottom: 12 }}>Insufficient Material Detected</div>
+          <p style={{ ...bodyText, fontSize: 14, marginBottom: 16 }}>
+            The agents determined that your provided papers and answers are not sufficient to draft a complete paper on this topic. 
+            Do you grant permission to scrape academic databases (Semantic Scholar, arXiv, OpenAlex) for missing context?
+          </p>
+          <div style={{ display: "flex", gap: 12 }}>
+            <button onClick={() => submitScrapePermission(true)} style={{ padding: "10px 20px", background: C.sienna, color: C.white, border: "none", borderRadius: 4, cursor: "pointer", fontWeight: "bold" }}>
+              Yes, Find More Sources
+            </button>
+            <button onClick={() => submitScrapePermission(false)} style={{ padding: "10px 20px", background: "transparent", color: C.sienna, border: `1px solid ${C.sienna}`, borderRadius: 4, cursor: "pointer", fontWeight: "bold" }}>
+              No, Proceed With Existing Material
+            </button>
+          </div>
+        </div>
+      )}
+
+      {awaitingApproval && (
+        <div className="fade-1" style={{ marginBottom: 32, padding: 24, background: C.creamLight, border: `1px solid ${C.gold}`, borderRadius: 4 }}>
+          <div style={{ ...sectionLabel, color: C.inkDark, marginBottom: 12 }}>Human-in-the-Loop: Review Outline & Sources</div>
+          <p style={{ ...bodyText, fontSize: 14, marginBottom: 16 }}>
+            The agents have generated the research outline and gathered sources. Please review them before heavy drafting begins.
+          </p>
+          
+          <div style={{ display: "flex", gap: 24, marginBottom: 20 }}>
+            <div style={{ flex: 1, background: C.white, padding: 16, borderRadius: 4, border: `1px solid ${C.border}`, maxHeight: 300, overflowY: "auto" }}>
+              <div style={{ fontWeight: "bold", marginBottom: 12, fontSize: 14 }}>Proposed Outline</div>
+              {outline?.sections?.map((sec: any, i: number) => (
+                <div key={i} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: i < outline.sections.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{i + 1}. {sec.name}</div>
+                  <div style={{ fontSize: 12, color: C.inkLight, marginTop: 4 }}>Needs: {sec.needs}</div>
+                  {sec.subsections && <div style={{ fontSize: 12, marginTop: 4 }}>↳ {sec.subsections.join(", ")}</div>}
+                </div>
+              ))}
+            </div>
+            
+            <div style={{ flex: 1, background: C.white, padding: 16, borderRadius: 4, border: `1px solid ${C.border}`, maxHeight: 300, overflowY: "auto" }}>
+              <div style={{ fontWeight: "bold", marginBottom: 12, fontSize: 14 }}>Citation Registry ({sources.length})</div>
+              {sources.map((src: any, i: number) => (
+                <div key={i} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: i < sources.length - 1 ? `1px solid ${C.border}` : "none", fontSize: 12 }}>
+                  <span style={{ fontWeight: 600, color: C.gold }}>[{src.id}]</span> {src.title}
+                  <div style={{ color: C.inkLight, marginTop: 2 }}>{src.authors} ({src.year}) • {src.tag}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ ...bodyText, fontSize: 13, fontWeight: "bold", marginBottom: 6 }}>Feedback / Requested Edits (Optional)</div>
+            <textarea 
+              value={approvalComment} 
+              onChange={e => setApprovalComment(e.target.value)}
+              placeholder="E.g., Please merge the literature review with the background section, and focus more on the second theme..." 
+              style={{ width: "100%", padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 3, minHeight: 70 }}
+            />
+          </div>
+
+          <button onClick={approve} style={{ padding: "12px 24px", background: C.gold, color: C.white, border: "none", borderRadius: 4, cursor: "pointer", fontWeight: "bold" }}>
+            Approve & Start Drafting
+          </button>
+        </div>
+      )}
+
+      {(loading || result) && !result?.error && !awaitingApproval && !awaitingQuestionnaire && !awaitingScrapePermission && (
         <div className="fade-1" style={{ marginBottom: 40 }}>
           <div style={{ display: "flex", gap: 8, marginBottom: -1 }}>
             <button onClick={() => setActiveTab("proposal")} disabled={!result} style={{ padding: "10px 20px", background: activeTab === "proposal" ? C.white : "transparent", border: `1px solid ${C.border}`, borderBottomColor: activeTab === "proposal" ? C.white : C.border, borderRadius: "4px 4px 0 0", fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 14, fontWeight: activeTab === "proposal" ? 600 : 400, color: activeTab === "proposal" ? C.inkDark : C.inkLight, cursor: !result ? "not-allowed" : "pointer", position: "relative", zIndex: activeTab === "proposal" ? 1 : 0, opacity: !result ? 0.5 : 1 }}>
@@ -266,14 +411,14 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
             {activeTab === "proposal" && result && (
               <div>
                 <div style={{ ...sectionLabel, color: C.inkDark, marginBottom: 16 }}>Pipeline Completed Successfully!</div>
-                <p style={{ ...bodyText, fontSize: 15, marginBottom: 12 }}>Your research paper and completion guide have been generated as .docx files in the backend storage directory.</p>
-                <div style={{ padding: 16, background: C.creamLight, border: `1px solid ${C.border}`, borderRadius: 4, marginBottom: 16 }}>
-                  <div style={{ fontWeight: "bold", marginBottom: 4 }}>Draft File:</div>
-                  <div style={{ wordBreak: "break-all", fontSize: 13, color: C.inkDark }}>{result.draft_file_path}</div>
-                </div>
-                <div style={{ padding: 16, background: C.creamLight, border: `1px solid ${C.border}`, borderRadius: 4 }}>
-                  <div style={{ fontWeight: "bold", marginBottom: 4 }}>Completion Guide File:</div>
-                  <div style={{ wordBreak: "break-all", fontSize: 13, color: C.inkDark }}>{result.completion_guide_file_path}</div>
+                <p style={{ ...bodyText, fontSize: 15, marginBottom: 20 }}>Your research paper and completion guide have been generated. You can download the dynamic PDFs below.</p>
+                <div style={{ display: "flex", gap: 16 }}>
+                  <a href={`${API}/reports/${sessionId}/draft.pdf`} target="_blank" rel="noreferrer" style={{ padding: "14px 20px", background: C.inkDark, color: C.cream, borderRadius: 4, textDecoration: "none", fontWeight: 600, fontSize: 14, display: "inline-block" }}>
+                    📄 Download Research Draft (PDF)
+                  </a>
+                  <a href={`${API}/reports/${sessionId}/guide.pdf`} target="_blank" rel="noreferrer" style={{ padding: "14px 20px", background: C.gold, color: C.white, borderRadius: 4, textDecoration: "none", fontWeight: 600, fontSize: 14, display: "inline-block" }}>
+                    📋 Download Completion Guide (PDF)
+                  </a>
                 </div>
               </div>
             )}
