@@ -23,6 +23,7 @@ def get_chroma() -> chromadb.ClientAPI:
 def get_user_collection(user_id: str) -> chromadb.Collection:
     """
     Return (or create) a ChromaDB collection scoped to a specific user.
+    Used by the legacy paper-upload pipeline (papers router, chat).
     Collection name: user_{uuid_with_underscores}
     """
     safe_name = f"user_{user_id.replace('-', '_')}"
@@ -31,3 +32,31 @@ def get_user_collection(user_id: str) -> chromadb.Collection:
         name=safe_name,
         metadata={"hnsw:space": "cosine"},
     )
+
+
+def get_session_collection(session_id: str) -> chromadb.Collection:
+    """
+    Return (or create) a ChromaDB collection scoped to a pipeline session.
+    Chunks ingested for one topic/session never surface in a different session.
+    Collection name: session_{uuid_with_underscores}
+    """
+    safe_name = f"session_{session_id.replace('-', '_')}"
+    client = get_chroma()
+    return client.get_or_create_collection(
+        name=safe_name,
+        metadata={"hnsw:space": "cosine"},
+    )
+
+
+def delete_session_collection(session_id: str) -> bool:
+    """
+    Delete a session-scoped ChromaDB collection (for cleanup/GC).
+    Returns True if deleted, False if it didn't exist.
+    """
+    safe_name = f"session_{session_id.replace('-', '_')}"
+    client = get_chroma()
+    try:
+        client.delete_collection(safe_name)
+        return True
+    except Exception:
+        return False
