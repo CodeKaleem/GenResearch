@@ -13,8 +13,11 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"proposal" | "analysis" | "logs">("logs"); // start on logs so they can see progress
+  const [activeTab, setActiveTab] = useState<"proposal" | "analysis" | "logs">("logs");
   const [liveState, setLiveState] = useState<{ current_step: string; steps_log: string[] }>({ current_step: "", steps_log: [] });
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [awaitingApproval, setAwaitingApproval] = useState(false);
+  const [outline, setOutline] = useState<any>(null);
 
   useEffect(() => {
     getCurrentUserId().then(uid => {
@@ -29,14 +32,28 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
 
   const run = async () => {
     if (!userId || selected.size === 0 || !topic.trim()) return;
-    setLoading(true); setResult(null); setActiveTab("logs");
-    setLiveState({ current_step: "starting", steps_log: ["⚡ Proposal generation workflow started"] });
+    setLoading(true); setResult(null); setActiveTab("logs"); setAwaitingApproval(false);
+    setLiveState({ current_step: "starting", steps_log: ["⚡ Pipeline started"] });
     
     try {
-      const res = await fetch(`${API}/agents/proposal-stream`, {
+      const res = await fetch(`${API}/pipeline/start`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, paper_ids: [...selected], topic }),
+        body: JSON.stringify({ user_id: userId, paper_ids: [...selected], topic, citation_style: "apa" }),
       });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const data = await res.json();
+      setSessionId(data.session_id);
+      
+      startStream(data.session_id);
+    } catch (e: any) { 
+      setResult({ error: e.message }); 
+      setLoading(false);
+    }
+  };
+
+  const startStream = async (sid: string) => {
+    try {
+      const res = await fetch(`${API}/pipeline/${sid}/stream`);
       if (!res.ok) throw new Error(`Error ${res.status}`);
       
       const reader = res.body?.getReader();
@@ -58,9 +75,18 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
             const data = JSON.parse(line);
             if (data.type === "state_update") {
               setLiveState(data.state);
+            } else if (data.type === "interrupt") {
+              setAwaitingApproval(true);
+              setOutline(data.outline);
+              setLoading(false);
+              return; // stop reading this stream, wait for user
             } else if (data.type === "done") {
-              setResult(data.final_result);
+              setResult(data.final_state);
               setActiveTab("proposal");
+              setLoading(false);
+            } else if (data.type === "error") {
+              setResult({ error: data.message });
+              setLoading(false);
             }
           } catch (e) {
             console.error("Failed to parse stream JSON", line);
@@ -69,37 +95,51 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
       }
     } catch (e: any) { 
       setResult({ error: e.message }); 
+      setLoading(false);
     }
-    finally { setLoading(false); }
+  };
+
+  const approve = async () => {
+    if (!sessionId) return;
+    setAwaitingApproval(false);
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/pipeline/${sessionId}/approve`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved: true })
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      startStream(sessionId);
+    } catch (e: any) {
+      setResult({ error: e.message });
+      setLoading(false);
+    }
   };
 
   const stepsList = [
-    { id: "analyze_topic", label: "Topic Analysis", agent: "Orchestrator" },
-    { id: "retrieve_literature", label: "Literature Retrieval", agent: "RAG Engine" },
-    { id: "generate_summaries", label: "Paper Summarization", agent: "Sub-Agent" },
-    { id: "generate_lit_review", label: "Literature Review", agent: "Sub-Agent" },
-    { id: "generate_citations", label: "Citation Extraction", agent: "Sub-Agent" },
-    { id: "compose_proposal", label: "Proposal Drafting", agent: "Orchestrator" },
-    { id: "review_proposal", label: "Quality Review", agent: "Orchestrator" },
+    { id: "topic_input", label: "Topic Input", agent: "Orchestrator" },
+    { id: "questionnaire", label: "Questionnaire", agent: "Nano 3B" },
+    { id: "sufficiency_eval", label: "Sufficiency Check", agent: "Nano 3B" },
+    { id: "gap_report", label: "Gap Report", agent: "Nano 3B" },
+    { id: "outline_plan", label: "Outline / Plan", agent: "Nano 3B" },
+    { id: "source_gathering", label: "Source Fetching", agent: "Tool" },
+    { id: "source_quality_eval", label: "Source Quality", agent: "Nano 3B" },
+    { id: "ingestion", label: "Registry Ingestion", agent: "Tool" },
+    { id: "user_approval", label: "Human Checkpoint", agent: "User" },
+    { id: "draft", label: "Draft Generation", agent: "Lightning 30B" },
+    { id: "citation_verify", label: "Citation Verify", agent: "Nano 3B" },
+    { id: "section_critic", label: "Quality Critic", agent: "Nano 3B" },
+    { id: "final_qa", label: "Final QA", agent: "Nano 3B" },
+    { id: "output", label: "Docx Generation", agent: "Tool" }
   ];
 
   const cancel = async () => {
-    if (!userId) return;
-    try {
-      await fetch(`${API}/agents/cancel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId }),
-      });
-    } catch {
-      /* ignore */
-    } finally {
-      setLoading(false);
-      setLiveState(prev => ({
-        ...prev,
-        steps_log: [...(prev.steps_log || []), "⛔ Workflow cancelled by user."]
-      }));
-    }
+    setLoading(false);
+    setAwaitingApproval(false);
+    setLiveState(prev => ({
+      ...prev,
+      steps_log: [...(prev.steps_log || []), "⛔ Workflow cancelled by user."]
+    }));
   };
 
   return (
@@ -195,7 +235,19 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
         )}
       </div>
 
-      {(loading || result) && !result?.error && (
+      {awaitingApproval && (
+        <div className="fade-1" style={{ marginBottom: 32, padding: 24, background: C.creamLight, border: `1px solid ${C.gold}`, borderRadius: 4 }}>
+          <div style={{ ...sectionLabel, color: C.inkDark, marginBottom: 12 }}>Human-in-the-Loop: Approval Required</div>
+          <p style={{ ...bodyText, fontSize: 14, marginBottom: 16 }}>
+            The agents have generated the research outline and gathered sources. Please approve to continue to heavy drafting.
+          </p>
+          <button onClick={approve} style={{ padding: "12px 24px", background: C.gold, color: C.white, border: "none", borderRadius: 4, cursor: "pointer", fontWeight: "bold" }}>
+            Approve & Continue Generation
+          </button>
+        </div>
+      )}
+
+      {(loading || result) && !result?.error && !awaitingApproval && (
         <div className="fade-1" style={{ marginBottom: 40 }}>
           <div style={{ display: "flex", gap: 8, marginBottom: -1 }}>
             <button onClick={() => setActiveTab("proposal")} disabled={!result} style={{ padding: "10px 20px", background: activeTab === "proposal" ? C.white : "transparent", border: `1px solid ${C.border}`, borderBottomColor: activeTab === "proposal" ? C.white : C.border, borderRadius: "4px 4px 0 0", fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 14, fontWeight: activeTab === "proposal" ? 600 : 400, color: activeTab === "proposal" ? C.inkDark : C.inkLight, cursor: !result ? "not-allowed" : "pointer", position: "relative", zIndex: activeTab === "proposal" ? 1 : 0, opacity: !result ? 0.5 : 1 }}>
@@ -213,29 +265,23 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
           <div style={{ ...cardBase, background: C.white, borderRadius: "0 4px 4px 4px", padding: "40px", minHeight: 400 }}>
             {activeTab === "proposal" && result && (
               <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${C.border}`, paddingBottom: 16, marginBottom: 24 }}>
-                  <div style={{ ...sectionLabel, color: C.inkDark }}>Generated Research Proposal</div>
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <button onClick={() => exportToPDF("Research_Proposal", result.proposal)} style={{ padding: "6px 12px", background: C.gold, color: C.white, border: "none", borderRadius: 3, cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>↓ Export PDF</button>
-                    <button onClick={() => exportToDOCX("Research_Proposal", result.proposal)} style={{ padding: "6px 12px", background: C.inkMid, color: C.white, border: "none", borderRadius: 3, cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>↓ Export DOCX</button>
-                  </div>
+                <div style={{ ...sectionLabel, color: C.inkDark, marginBottom: 16 }}>Pipeline Completed Successfully!</div>
+                <p style={{ ...bodyText, fontSize: 15, marginBottom: 12 }}>Your research paper and completion guide have been generated as .docx files in the backend storage directory.</p>
+                <div style={{ padding: 16, background: C.creamLight, border: `1px solid ${C.border}`, borderRadius: 4, marginBottom: 16 }}>
+                  <div style={{ fontWeight: "bold", marginBottom: 4 }}>Draft File:</div>
+                  <div style={{ wordBreak: "break-all", fontSize: 13, color: C.inkDark }}>{result.draft_file_path}</div>
                 </div>
-                <div className="proposal-markdown" style={{ ...bodyText, fontSize: 15, lineHeight: 1.8, whiteSpace: "pre-wrap" }}>
-                  {result.proposal}
+                <div style={{ padding: 16, background: C.creamLight, border: `1px solid ${C.border}`, borderRadius: 4 }}>
+                  <div style={{ fontWeight: "bold", marginBottom: 4 }}>Completion Guide File:</div>
+                  <div style={{ wordBreak: "break-all", fontSize: 13, color: C.inkDark }}>{result.completion_guide_file_path}</div>
                 </div>
               </div>
             )}
             
             {activeTab === "analysis" && result && (
               <div>
-                <div style={{ ...sectionLabel, marginBottom: 12 }}>1. Topic Analysis (Orchestrator)</div>
-                <div style={{ padding: 16, background: C.creamLight, border: `1px solid ${C.border}`, borderRadius: 4, marginBottom: 24, ...bodyText, fontSize: 13.5, whiteSpace: "pre-wrap" }}>{result.topic_analysis}</div>
-                
-                <div style={{ ...sectionLabel, marginBottom: 12 }}>2. Literature Review (Sub-Agent)</div>
-                <div style={{ padding: 16, background: C.creamLight, border: `1px solid ${C.border}`, borderRadius: 4, marginBottom: 24, ...bodyText, fontSize: 13.5, whiteSpace: "pre-wrap" }}>{result.literature_review}</div>
-                
-                <div style={{ ...sectionLabel, marginBottom: 12 }}>3. Extracted Citations (Sub-Agent)</div>
-                <div style={{ padding: 16, background: C.creamLight, border: `1px solid ${C.border}`, borderRadius: 4, ...bodyText, fontSize: 13.5, whiteSpace: "pre-wrap" }}>{result.citations}</div>
+                <div style={{ ...sectionLabel, marginBottom: 12 }}>Agent Analysis Unavailable</div>
+                <div style={{ padding: 16, background: C.creamLight, border: `1px solid ${C.border}`, borderRadius: 4, marginBottom: 24, ...bodyText, fontSize: 13.5, whiteSpace: "pre-wrap" }}>The backend now generates `.docx` files instead of raw text. Please check the generated files for your full research paper and gap analysis completion guide!</div>
               </div>
             )}
             
