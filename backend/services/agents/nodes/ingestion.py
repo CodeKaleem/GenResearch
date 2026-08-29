@@ -2,6 +2,9 @@
 # Node: Ingestion + Citation Registry (Stage 8)
 # Builds the citation registry and embeds sources into ChromaDB.
 # No LLM call — pure data processing.
+#
+# A6/B1: Uses session-scoped ChromaDB collections — chunks for
+#        one topic/session never surface in a different session.
 # ============================================================
 from __future__ import annotations
 
@@ -9,7 +12,7 @@ import logging
 import uuid
 from datetime import datetime
 
-from services.chroma_service import store_chunks
+from services.chroma_service import store_chunks_session
 from services.chunker import chunk_text
 
 logger = logging.getLogger(__name__)
@@ -20,7 +23,6 @@ def _build_citation_id(index: int) -> str:
 
 
 async def ingestion_node(state: dict) -> dict:
-    user_id = state.get("user_id", "anonymous")
     session_id = state.get("session_id", str(uuid.uuid4()))
     quality_results = state.get("source_quality_results", {})
 
@@ -61,7 +63,7 @@ async def ingestion_node(state: dict) -> dict:
         })
         all_accepted.append({**s, "tag": "scraped", "citation_id": cid})
 
-    # Ingest into ChromaDB
+    # Ingest into session-scoped ChromaDB collection (A6/B1)
     total_chunks = 0
     for source in all_accepted:
         content = source.get("abstract_snippet", "") or source.get("content", "")
@@ -69,10 +71,12 @@ async def ingestion_node(state: dict) -> dict:
             continue
         chunks = chunk_text(content)
         if chunks:
-            num = await store_chunks(
-                user_id=user_id, paper_id=source.get("citation_id", str(uuid.uuid4())),
-                chunks=chunks, title=source.get("title", "Unknown"),
-                collection_name=f"session_{session_id}",
+            num = await store_chunks_session(
+                session_id=session_id,
+                source_id=source.get("citation_id", str(uuid.uuid4())),
+                chunks=chunks,
+                title=source.get("title", "Unknown"),
+                tag=source.get("tag", "scraped"),
             )
             total_chunks += num
 

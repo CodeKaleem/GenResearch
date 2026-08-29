@@ -4,7 +4,7 @@
 # ============================================================
 import httpx
 from config import settings
-from database.chroma_client import get_user_collection
+from database.chroma_client import get_user_collection, get_session_collection
 from services.embedder import embed_single
 
 
@@ -44,6 +44,44 @@ async def semantic_search(
                 "text": results["documents"][0][i],
                 "metadata": results["metadatas"][0][i],
                 "paper_id": results["metadatas"][0][i].get("paper_id", ""),
+                "title": results["metadatas"][0][i].get("title", "Unknown"),
+                "chunk_index": results["metadatas"][0][i].get("chunk_index", 0),
+                "distance": results["distances"][0][i],
+            })
+
+    return hits
+
+
+async def semantic_search_session(
+    session_id: str,
+    query: str,
+    top_k: int = 5,
+) -> list[dict]:
+    """
+    Session-scoped semantic search for the pipeline draft node.
+    Queries ONLY the session's ChromaDB collection — guarantees
+    that chunks from different topics/sessions never leak.
+    """
+    query_embedding = await embed_single(query)
+    collection = get_session_collection(session_id)
+
+    if collection.count() == 0:
+        return []
+
+    results = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=min(top_k, collection.count()),
+        include=["documents", "metadatas", "distances"],
+    )
+
+    hits: list[dict] = []
+    if results and results["ids"] and results["ids"][0]:
+        for i, doc_id in enumerate(results["ids"][0]):
+            hits.append({
+                "id": doc_id,
+                "text": results["documents"][0][i],
+                "metadata": results["metadatas"][0][i],
+                "source_id": results["metadatas"][0][i].get("source_id", ""),
                 "title": results["metadatas"][0][i].get("title", "Unknown"),
                 "chunk_index": results["metadatas"][0][i].get("chunk_index", 0),
                 "distance": results["distances"][0][i],

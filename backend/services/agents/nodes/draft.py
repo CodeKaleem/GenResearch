@@ -2,12 +2,15 @@
 # Node: Draft Agent (Stage 10)
 # Model: nemotron-3.5-lightning-30b-a3b (the ONLY heavy model)
 # RAG-grounded, citation-registry bound.
+#
+# A6/B1: Uses session-scoped ChromaDB search — guarantees
+#        that chunks from different topics never contaminate retrieval.
 # ============================================================
 from __future__ import annotations
 import logging
 
 from services.llm_service import call_llm
-from services.rag_service import semantic_search
+from services.rag_service import semantic_search_session
 from services.agents.prompts.draft import DRAFT_SYSTEM, build_draft_prompt
 
 logger = logging.getLogger(__name__)
@@ -22,16 +25,20 @@ async def draft_node(state: dict) -> dict:
     topic = state["topic"]
     outline = state.get("outline", {})
     registry = state.get("citation_registry", [])
-    user_id = state.get("user_id", "anonymous")
+    session_id = state.get("session_id", "unknown")
     citation_style = state.get("citation_style", "apa")
 
-    # Build RAG context from ChromaDB
-    rag_chunks = await semantic_search(user_id=user_id, query=topic, top_k=20)
+    # Build RAG context from session-scoped ChromaDB (A6/B1)
+    rag_chunks = await semantic_search_session(
+        session_id=session_id, query=topic, top_k=20
+    )
 
     # Also search for each section's topic
     for section in outline.get("sections", [])[:5]:
         section_query = f"{topic} {section.get('name', '')}"
-        section_chunks = await semantic_search(user_id=user_id, query=section_query, top_k=5)
+        section_chunks = await semantic_search_session(
+            session_id=session_id, query=section_query, top_k=5
+        )
         rag_chunks.extend(section_chunks)
 
     # Deduplicate by chunk id
@@ -52,6 +59,7 @@ async def draft_node(state: dict) -> dict:
     prompt = build_draft_prompt(
         topic=topic, outline=outline, citation_registry=registry,
         rag_context=rag_context, citation_style=citation_style,
+        approval_comment=state.get("approval_comment", "")
     )
 
     draft = await call_llm(
