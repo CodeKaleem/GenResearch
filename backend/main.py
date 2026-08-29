@@ -8,6 +8,7 @@ from config import settings
 from routers.papers import router as papers_router
 from routers.chat import router as chat_router
 from routers.pipeline import router as pipeline_router
+from routers.reports import router as reports_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -28,6 +29,7 @@ app.add_middleware(
 app.include_router(papers_router)
 app.include_router(chat_router)
 app.include_router(pipeline_router)
+app.include_router(reports_router)
 
 
 # ── Health Check ──────────────────────────────────────────────
