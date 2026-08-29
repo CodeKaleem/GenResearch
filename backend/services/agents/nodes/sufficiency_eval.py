@@ -72,10 +72,22 @@ async def sufficiency_eval_node(state: dict) -> dict:
             "summary": "Failed to parse evaluation — treating as needs_more.",
         }
 
+    # A5 Fix: compute retry/flag locally
+    passed = report.get("overall_assessment") == "sufficient"
+    feedback = "Material is insufficient. Missing background or sources."
+    decision = should_retry(state, NODE_NAME, passed, feedback)
+
+    extra_state = {}
+    if decision == "retry":
+        extra_state = build_retry_state_update(NODE_NAME, feedback, state)
+    elif decision == "flag":
+        extra_state = build_flag_state_update(NODE_NAME, feedback, state)
+
     return {
         "sufficiency_report": report,
         "current_step": "sufficiency_eval",
         **attempt_update,
+        **extra_state,
         "steps_log": [
             f"✓ Sufficiency evaluation: {report.get('overall_assessment', 'unknown')}"
         ],

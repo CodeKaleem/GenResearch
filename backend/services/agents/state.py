@@ -67,9 +67,15 @@ class ProposalState(TypedDict, total=False):
     questionnaire_questions: list[dict]     # generated questions
     questionnaire_answers: dict             # user's responses
 
+    # ── Stage 2b: User-Document Quality Eval (B2) ────────────
+    user_doc_quality_results: dict          # { filename: { passed, reasoning } }
+
     # ── Stage 3: Sufficiency Evaluator ───────────────────────
     # Per-section confidence: { section_name: "well_supported"|"adequate"|"weak" }
     sufficiency_report: dict
+
+    # ── Stage 3b: Scrape Permission (B3) ─────────────────────
+    scrape_permission_granted: bool         # user's decision
 
     # ── Stage 4: Gap Report ──────────────────────────────────
     # { covered: [...], missing: [{ topic, reason }, ...] }
@@ -124,6 +130,5 @@ class ProposalState(TypedDict, total=False):
     current_step: Annotated[str, _last_value]
     steps_log: Annotated[list[str], operator.add]
 
-    # ── Output (Stage 14) ───────────────────────────────────
-    draft_file_path: str            # path to generated .docx draft
-    completion_guide_file_path: str  # path to generated .docx guide
+    # ── User approval feedback (B4) ──────────────────────────
+    approval_comment: str              # user's comment/edit on the outline
