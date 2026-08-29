@@ -55,6 +55,7 @@ def build_draft_prompt(
     citation_registry: list[dict],
     rag_context: str,
     citation_style: str = "apa",
+    approval_comment: str = "",
 ) -> str:
     # Build outline instructions
     sections_text = ""
@@ -81,11 +82,20 @@ def build_draft_prompt(
         tag = entry.get("tag", "scraped")
         registry_text += f"[{cid}] {authors} ({year}). {title} [{tag}]\n"
 
+    user_feedback_section = ""
+    if approval_comment:
+        user_feedback_section = f"""
+═══════════════════════════════════════
+USER FEEDBACK & REQUESTED EDITS:
+═══════════════════════════════════════
+{approval_comment}
+"""
+
     return f"""Write a complete, publication-ready research paper draft.
 
 RESEARCH TOPIC: {topic}
 CITATION STYLE: {citation_style.upper()}
-
+{user_feedback_section}
 ═══════════════════════════════════════
 APPROVED OUTLINE:
 ═══════════════════════════════════════
@@ -106,5 +116,5 @@ STYLE EXEMPLARS (follow this quality level):
 ═══════════════════════════════════════
 {FEW_SHOT_EXEMPLARS}
 
-Now compose the complete research paper draft. Follow the outline structure exactly. \
+Now compose the complete research paper draft. Follow the outline structure exactly (taking into account any USER FEEDBACK). \
 Cite sources using their registry IDs (e.g., [CR-001]). Mark any unsupported claims with [CITATION NEEDED]."""

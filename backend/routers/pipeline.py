@@ -4,13 +4,15 @@
 # ============================================================
 import json
 import logging
-import asyncio
+import uuid
 from typing import AsyncGenerator
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services.agents.pipeline_graph import build_pipeline_graph
+from database.supabase_client import get_supabase
+from database.chroma_client import get_user_collection
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +32,13 @@ class StartPipelineRequest(BaseModel):
 class SubmitQuestionnaireRequest(BaseModel):
     answers: dict
 
+class ScrapePermissionRequest(BaseModel):
+    granted: bool
+
 class ApprovalRequest(BaseModel):
     approved: bool
     updated_outline: dict | None = None
+    approval_comment: str | None = None
 
 
 # Compile the graph globally
@@ -41,29 +47,69 @@ from langgraph.checkpoint.memory import MemorySaver
 _checkpointer = MemorySaver()
 _pipeline_graph = build_pipeline_graph().compile(
     checkpointer=_checkpointer,
-    interrupt_before=["user_approval"]
+    interrupt_before=[
+        "user_doc_quality_eval",  # A2: Pause before checking docs, effectively pausing after questionnaire
+        "scrape_permission",      # B3: Pause before web scraping
+        "user_approval"           # B4: Pause before drafting
+    ]
 )
+
+
+def _fetch_user_sources(user_id: str, paper_ids: list[str]) -> list[dict]:
+    """A1 Fix: Fetch paper metadata from Supabase and content from ChromaDB."""
+    if not paper_ids:
+        return []
+
+    sb = get_supabase()
+    res = sb.table("papers").select("*").in_("id", paper_ids).eq("user_id", user_id).execute()
+    papers = res.data or []
+
+    col = get_user_collection(user_id)
+    user_sources = []
+
+    for p in papers:
+        pid = p["id"]
+        # Fetch chunks from ChromaDB for this paper
+        try:
+            results = col.get(where={"paper_id": pid})
+            chunks = results.get("documents", [])
+            content = "\n\n".join(chunks)
+        except Exception:
+            content = ""
+
+        user_sources.append({
+            "id": pid,
+            "title": p.get("title", "Unknown Document"),
+            "authors": p.get("authors", "Unknown"),
+            "year": p.get("year"),
+            "url": "",
+            "doi": "",
+            "source_type": "uploaded",
+            "content": content,
+            "abstract_snippet": content[:1000] if content else "",
+        })
+
+    return user_sources
 
 
 @router.post("/start")
 async def start_pipeline(req: StartPipelineRequest):
-    """Start a new pipeline run. Executes until the first interrupt (User Approval)."""
-    import uuid
+    """Start a new pipeline run. Executes until the first interrupt."""
     session_id = str(uuid.uuid4())
+    
+    # A1 Fix: Populate user_provided_sources instead of dropping paper_ids
+    user_sources = _fetch_user_sources(req.user_id, req.paper_ids)
     
     initial_state = {
         "topic": req.topic,
         "user_id": req.user_id,
         "session_id": session_id,
         "citation_style": req.citation_style,
+        "user_provided_sources": user_sources,
         "steps_log": ["⚡ Pipeline started"]
     }
     
     thread_config = {"configurable": {"thread_id": session_id}}
-    
-    # Start it asynchronously so we can return the session ID immediately
-    # In a real production app, this would go to Celery/Redis queue.
-    # For now, we'll let the user stream it.
     
     _sessions[session_id] = {
         "state": initial_state,
@@ -111,7 +157,18 @@ async def stream_pipeline(session_id: str):
             final_state = _pipeline_graph.get_state(config)
             next_nodes = final_state.next
             
-            if "user_approval" in next_nodes:
+            if "user_doc_quality_eval" in next_nodes:
+                yield json.dumps({
+                    "type": "interrupt",
+                    "reason": "awaiting_questionnaire",
+                    "questions": final_state.values.get("questionnaire_questions", [])
+                }) + "\n"
+            elif "scrape_permission" in next_nodes:
+                yield json.dumps({
+                    "type": "interrupt",
+                    "reason": "awaiting_scrape_permission"
+                }) + "\n"
+            elif "user_approval" in next_nodes:
                 yield json.dumps({
                     "type": "interrupt",
                     "reason": "awaiting_approval",
@@ -136,20 +193,45 @@ async def stream_pipeline(session_id: str):
 
 @router.post("/{session_id}/questionnaire")
 async def submit_questionnaire(session_id: str, req: SubmitQuestionnaireRequest):
-    """Submit questionnaire answers. Since we don't interrupt here in LangGraph strictly,
-    we can just update the state and resume streaming."""
+    """Resume the pipeline after questionnaire checkpoint."""
     if session_id not in _sessions:
         raise HTTPException(status_code=404, detail="Session not found")
         
     config = _sessions[session_id]["config"]
+    current_state = _pipeline_graph.get_state(config)
+    
+    if "user_doc_quality_eval" not in current_state.next:
+        raise HTTPException(status_code=400, detail="Pipeline is not awaiting questionnaire.")
+    
+    # Send answers directly to the node that was interrupted BEFORE
+    _pipeline_graph.update_state(
+        config,
+        {"questionnaire_answers": req.answers, "status": "questionnaire_answered"},
+        as_node="questionnaire"
+    )
+    
+    return {"status": "resumed"}
+
+
+@router.post("/{session_id}/scrape-permission")
+async def grant_scrape_permission(session_id: str, req: ScrapePermissionRequest):
+    """Resume the pipeline after scrape permission checkpoint."""
+    if session_id not in _sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    config = _sessions[session_id]["config"]
+    current_state = _pipeline_graph.get_state(config)
+    
+    if "scrape_permission" not in current_state.next:
+        raise HTTPException(status_code=400, detail="Pipeline is not awaiting scrape permission.")
     
     _pipeline_graph.update_state(
         config,
-        {"questionnaire_answers": req.answers},
-        as_node="topic_input"
+        {"scrape_permission_granted": req.granted, "status": "permission_resolved"},
+        as_node="sufficiency_eval"
     )
     
-    return {"status": "answers_submitted"}
+    return {"status": "resumed"}
 
 
 @router.post("/{session_id}/approve")
@@ -164,10 +246,11 @@ async def approve_pipeline(session_id: str, req: ApprovalRequest):
     if "user_approval" not in current_state.next:
         raise HTTPException(status_code=400, detail="Pipeline is not awaiting approval.")
     
-    # Update state if user modified the outline
     state_updates = {"status": "approved"}
     if req.updated_outline:
         state_updates["outline"] = req.updated_outline
+    if req.approval_comment:
+        state_updates["approval_comment"] = req.approval_comment
         
     _pipeline_graph.update_state(config, state_updates, as_node="merge_ab")
     
