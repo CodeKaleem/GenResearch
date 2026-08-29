@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from routers.papers import router as papers_router
 from routers.chat import router as chat_router
-from routers.agent_tasks import router as agent_tasks_router
+from routers.pipeline import router as pipeline_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -27,7 +27,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────
 app.include_router(papers_router)
 app.include_router(chat_router)
-app.include_router(agent_tasks_router)
+app.include_router(pipeline_router)
 
 
 # ── Health Check ──────────────────────────────────────────────
