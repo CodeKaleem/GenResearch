@@ -1,6 +1,9 @@
 # ============================================================
 # Node: Section Critic (Stage 12 — Branch D)
 # Model: nemotron-3-nano
+#
+# A5: Retry/flag state is now written INSIDE the node, not in
+#     the routing function (which can only select the next node).
 # ============================================================
 from __future__ import annotations
 import json
@@ -10,7 +13,10 @@ from services.llm_service import call_llm
 from services.agents.prompts.section_critic import (
     SECTION_CRITIC_SYSTEM, SECTION_CRITIC_THRESHOLD, build_section_critic_prompt,
 )
-from services.agents.retry import increment_attempt
+from services.agents.retry import (
+    increment_attempt, should_retry,
+    build_retry_state_update, build_flag_state_update,
+)
 
 logger = logging.getLogger(__name__)
 NODE_NAME = "section_critic"
@@ -43,10 +49,22 @@ async def section_critic_node(state: dict) -> dict:
     score = result.get("overall_score", 0)
     result["passed"] = score >= SECTION_CRITIC_THRESHOLD
 
+    # A5: Compute retry/flag decision and write state HERE, not in router
+    passed = result["passed"]
+    feedback = result.get("summary", "")
+    decision = should_retry(state, NODE_NAME, passed, feedback)
+
+    extra_state = {}
+    if decision == "retry":
+        extra_state = build_retry_state_update(NODE_NAME, feedback, state)
+    elif decision == "flag":
+        extra_state = build_flag_state_update(NODE_NAME, feedback, state)
+
     return {
         "section_critic_result": result,
         "current_step": "section_critic",
         **attempt_update,
+        **extra_state,
         "steps_log": [
             f"✓ Section critique: {score}/10 overall "
             f"({'PASSED' if result['passed'] else 'NEEDS REVIEW'})"
