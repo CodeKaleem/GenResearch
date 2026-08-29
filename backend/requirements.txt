@@ -9,3 +9,8 @@ langchain-core
 langgraph
 httpx
 python-dotenv
+openai
+python-docx
+trafilatura
+aiohttp
+structlog
