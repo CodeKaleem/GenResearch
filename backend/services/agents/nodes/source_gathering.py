@@ -32,7 +32,7 @@ async def source_gathering_node(state: dict) -> dict:
             ],
         }
 
-    found_sources, unfilled_gaps = await gather_sources_for_gaps(
+    found_sources, unfilled_gaps, errors = await gather_sources_for_gaps(
         gaps=gaps,
         existing_sources=existing,
         sources_per_gap=3,
@@ -49,12 +49,16 @@ async def source_gathering_node(state: dict) -> dict:
             "action_required": "You may need to find sources for this topic manually.",
         })
 
+    steps_log = [
+        f"✓ Found {len(found_sources)} academic sources for {len(gaps)} gaps"
+        + (f" ({len(unfilled_gaps)} gaps still unfilled)" if unfilled_gaps else "")
+    ]
+    if errors:
+        steps_log.append(f"⚠ Source API errors encountered: {len(errors)}")
+
     return {
         "scraped_sources": found_sources,
         "flagged_items": new_flags,
         "current_step": "source_gathering",
-        "steps_log": [
-            f"✓ Found {len(found_sources)} academic sources for {len(gaps)} gaps"
-            + (f" ({len(unfilled_gaps)} gaps still unfilled)" if unfilled_gaps else "")
-        ],
+        "steps_log": steps_log,
     }

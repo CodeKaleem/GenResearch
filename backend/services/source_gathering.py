@@ -34,7 +34,7 @@ async def search_semantic_scholar(
     query: str,
     limit: int = 5,
     session: Optional[aiohttp.ClientSession] = None,
-) -> list[dict]:
+) -> dict:
     """
     Search Semantic Scholar for academic papers.
     Returns structured source metadata.
@@ -57,7 +57,7 @@ async def search_semantic_scholar(
         async with session.get(url, params=params, headers=headers) as resp:
             if resp.status != 200:
                 logger.warning("semantic_scholar_error", extra={"status": resp.status})
-                return []
+                return {"status": "error", "error": f"Semantic Scholar HTTP {resp.status}", "results": []}
             data = await resp.json()
 
         papers = data.get("data", [])
@@ -78,11 +78,11 @@ async def search_semantic_scholar(
                 "source_api": "semantic_scholar",
                 "accessed_date": datetime.utcnow().isoformat(),
             })
-        return results
+        return {"status": "success", "results": results, "error": ""}
 
     except Exception as e:
         logger.warning("semantic_scholar_exception", extra={"error": str(e)})
-        return []
+        return {"status": "error", "error": f"Semantic Scholar exception: {str(e)}", "results": []}
     finally:
         if own_session:
             await session.close()
@@ -92,7 +92,7 @@ async def search_arxiv(
     query: str,
     limit: int = 5,
     session: Optional[aiohttp.ClientSession] = None,
-) -> list[dict]:
+) -> dict:
     """
     Search arXiv for preprints via their Atom API.
     """
@@ -114,7 +114,7 @@ async def search_arxiv(
         async with session.get(url, params=params) as resp:
             if resp.status != 200:
                 logger.warning("arxiv_error", extra={"status": resp.status})
-                return []
+                return {"status": "error", "error": f"arXiv HTTP {resp.status}", "results": []}
             text = await resp.text()
 
         # Parse Atom XML
@@ -155,11 +155,81 @@ async def search_arxiv(
                 "accessed_date": datetime.utcnow().isoformat(),
             })
 
-        return results
+        return {"status": "success", "results": results, "error": ""}
 
     except Exception as e:
         logger.warning("arxiv_exception", extra={"error": str(e)})
-        return []
+        return {"status": "error", "error": f"arXiv exception: {str(e)}", "results": []}
+    finally:
+        if own_session:
+            await session.close()
+
+
+async def search_crossref(
+    query: str,
+    limit: int = 5,
+    session: Optional[aiohttp.ClientSession] = None,
+) -> dict:
+    """
+    Search CrossRef API for DOIs and scholarly works.
+    A8: Added to fulfill Priority 3.
+    """
+    url = "https://api.crossref.org/works"
+    params = {
+        "query": query,
+        "rows": limit,
+        "select": "title,author,published-print,DOI,URL,abstract,is-referenced-by-count",
+    }
+    headers = {"User-Agent": "GenResearch/0.2.0 (mailto:research@genresearch.dev)"}
+
+    own_session = session is None
+    if own_session:
+        session = aiohttp.ClientSession(timeout=API_TIMEOUT)
+
+    try:
+        async with session.get(url, params=params, headers=headers) as resp:
+            if resp.status != 200:
+                logger.warning("crossref_error", extra={"status": resp.status})
+                return {"status": "error", "error": f"CrossRef HTTP {resp.status}", "results": []}
+            data = await resp.json()
+
+        results = []
+        for item in data.get("message", {}).get("items", []):
+            title = item.get("title", ["Unknown"])[0] if item.get("title") else "Unknown"
+            
+            author_names = []
+            for a in item.get("author", []):
+                if "given" in a and "family" in a:
+                    author_names.append(f"{a['given']} {a['family']}")
+                elif "family" in a:
+                    author_names.append(a["family"])
+                elif "name" in a:
+                    author_names.append(a["name"])
+            
+            authors = ", ".join(author_names) if author_names else "Unknown"
+            
+            year = None
+            pub = item.get("published-print", {})
+            if "date-parts" in pub and pub["date-parts"]:
+                year = pub["date-parts"][0][0]
+
+            results.append({
+                "title": title,
+                "authors": authors,
+                "year": year,
+                "url": item.get("URL", ""),
+                "doi": item.get("DOI", ""),
+                "abstract_snippet": item.get("abstract", "")[:300] if item.get("abstract") else "",
+                "citation_count": item.get("is-referenced-by-count", 0),
+                "source_api": "crossref",
+                "accessed_date": datetime.utcnow().isoformat(),
+            })
+
+        return {"status": "success", "results": results, "error": ""}
+
+    except Exception as e:
+        logger.warning("crossref_exception", extra={"error": str(e)})
+        return {"status": "error", "error": f"CrossRef exception: {str(e)}", "results": []}
     finally:
         if own_session:
             await session.close()
@@ -169,7 +239,7 @@ async def search_openalex(
     query: str,
     limit: int = 5,
     session: Optional[aiohttp.ClientSession] = None,
-) -> list[dict]:
+) -> dict:
     """
     Search OpenAlex for academic works.
     Free, no API key required.
@@ -190,7 +260,7 @@ async def search_openalex(
         async with session.get(url, params=params, headers=headers) as resp:
             if resp.status != 200:
                 logger.warning("openalex_error", extra={"status": resp.status})
-                return []
+                return {"status": "error", "error": f"OpenAlex HTTP {resp.status}", "results": []}
             data = await resp.json()
 
         results = []
@@ -216,11 +286,11 @@ async def search_openalex(
                 "accessed_date": datetime.utcnow().isoformat(),
             })
 
-        return results
+        return {"status": "success", "results": results, "error": ""}
 
     except Exception as e:
         logger.warning("openalex_exception", extra={"error": str(e)})
-        return []
+        return {"status": "error", "error": f"OpenAlex exception: {str(e)}", "results": []}
     finally:
         if own_session:
             await session.close()
@@ -230,7 +300,7 @@ async def gather_sources_for_gaps(
     gaps: list[dict],
     existing_sources: list[dict] | None = None,
     sources_per_gap: int = 3,
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[str]]:
     """
     Gap-driven source gathering.
 
@@ -240,7 +310,7 @@ async def gather_sources_for_gaps(
         sources_per_gap: Max sources to find per gap.
 
     Returns:
-        (found_sources, unfilled_gaps) — sources found + gaps with no results.
+        (found_sources, unfilled_gaps, errors) — sources found, gaps with no results, and a list of API error messages.
     """
     existing_titles = set()
     if existing_sources:
@@ -248,6 +318,7 @@ async def gather_sources_for_gaps(
 
     all_found: list[dict] = []
     unfilled: list[dict] = []
+    errors: list[str] = []
 
     async with aiohttp.ClientSession(timeout=API_TIMEOUT) as session:
         for gap in gaps:
@@ -259,8 +330,10 @@ async def gather_sources_for_gaps(
             gap_sources: list[dict] = []
 
             # Priority 1: Semantic Scholar
-            ss_results = await search_semantic_scholar(query, limit=sources_per_gap, session=session)
-            for s in ss_results:
+            res = await search_semantic_scholar(query, limit=sources_per_gap, session=session)
+            if res["status"] == "error":
+                errors.append(res["error"])
+            for s in res["results"]:
                 if s["title"].lower() not in existing_titles:
                     s["gap_topic"] = gap.get("topic", "")
                     gap_sources.append(s)
@@ -269,18 +342,34 @@ async def gather_sources_for_gaps(
             # Priority 2: arXiv (if Semantic Scholar didn't fill the gap)
             if len(gap_sources) < sources_per_gap:
                 remaining = sources_per_gap - len(gap_sources)
-                arxiv_results = await search_arxiv(query, limit=remaining, session=session)
-                for s in arxiv_results:
+                res = await search_arxiv(query, limit=remaining, session=session)
+                if res["status"] == "error":
+                    errors.append(res["error"])
+                for s in res["results"]:
+                    if s["title"].lower() not in existing_titles:
+                        s["gap_topic"] = gap.get("topic", "")
+                        gap_sources.append(s)
+                        existing_titles.add(s["title"].lower())
+                        
+            # Priority 3: CrossRef (A8)
+            if len(gap_sources) < sources_per_gap:
+                remaining = sources_per_gap - len(gap_sources)
+                res = await search_crossref(query, limit=remaining, session=session)
+                if res["status"] == "error":
+                    errors.append(res["error"])
+                for s in res["results"]:
                     if s["title"].lower() not in existing_titles:
                         s["gap_topic"] = gap.get("topic", "")
                         gap_sources.append(s)
                         existing_titles.add(s["title"].lower())
 
-            # Priority 3: OpenAlex (if still not enough)
+            # Priority 4: OpenAlex (if still not enough)
             if len(gap_sources) < sources_per_gap:
                 remaining = sources_per_gap - len(gap_sources)
-                oa_results = await search_openalex(query, limit=remaining, session=session)
-                for s in oa_results:
+                res = await search_openalex(query, limit=remaining, session=session)
+                if res["status"] == "error":
+                    errors.append(res["error"])
+                for s in res["results"]:
                     if s["title"].lower() not in existing_titles:
                         s["gap_topic"] = gap.get("topic", "")
                         gap_sources.append(s)
@@ -300,7 +389,8 @@ async def gather_sources_for_gaps(
             "gaps_searched": len(gaps),
             "sources_found": len(all_found),
             "unfilled_gaps": len(unfilled),
+            "errors": len(errors),
         },
     )
 
-    return all_found, unfilled
+    return all_found, unfilled, errors
