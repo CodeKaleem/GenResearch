@@ -33,6 +33,7 @@ ROLE_MODEL_MAP: dict[str, str] = {
     # Cheap / fast for evaluation, critique, questionnaire
     "questionnaire": settings.NVIDIA_EVAL_MODEL,
     "sufficiency_evaluator": settings.NVIDIA_EVAL_MODEL,
+    "user_doc_quality_eval": settings.NVIDIA_EVAL_MODEL,
     "gap_report": settings.NVIDIA_EVAL_MODEL,
     "outline_plan": settings.NVIDIA_EVAL_MODEL,
     "source_quality_evaluator": settings.NVIDIA_EVAL_MODEL,
