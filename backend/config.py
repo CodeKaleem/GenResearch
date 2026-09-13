@@ -1,7 +1,3 @@
-# ============================================================
-# GenResearch — Unified Configuration
-# Single source of truth for all settings across the backend.
-# ============================================================
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -15,50 +11,51 @@ class Settings:
     Environment variables override defaults.
     """
 
-    # ── App ───────────────────────────────────────────────────
+    # App
     APP_NAME: str = os.getenv("APP_NAME", "GenResearch")
-    APP_VERSION: str = os.getenv("APP_VERSION", "0.2.0")
+    APP_VERSION: str = os.getenv("APP_VERSION", "0.3.0")
     DEBUG: bool = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
     SECRET_KEY: str = os.getenv("SECRET_KEY", "super-secret-key-for-dev")
 
-    # ── NVIDIA NIM (text generation) ─────────────────────────
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "nvidia")
-    NVIDIA_BASE_URL: str = os.getenv(
-        "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
-    )
-    NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
-    NVIDIA_DRAFT_MODEL: str = os.getenv(
-        "NVIDIA_DRAFT_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b"
-    )
-    NVIDIA_EVAL_MODEL: str = os.getenv(
-        "NVIDIA_EVAL_MODEL", "nvidia/nemotron-3-nano-30b-a3b"
-    )
-
-    # ── Ollama (embeddings ONLY) ─────────────────────────────
+    # Ollama (the only LLM provider)
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 
-    # ── Supabase ─────────────────────────────────────────────
+    # Heavy tier
+    OLLAMA_HEAVY_MODEL: str = os.getenv("OLLAMA_HEAVY_MODEL", "llama3.1:8b")
+    OLLAMA_HEAVY_MAX_CONCURRENT: int = int(os.getenv("OLLAMA_HEAVY_MAX_CONCURRENT", "1"))
+    OLLAMA_HEAVY_NUM_THREAD: int = int(os.getenv("OLLAMA_HEAVY_NUM_THREAD", "5"))
+    OLLAMA_HEAVY_NUM_GPU: int = int(os.getenv("OLLAMA_HEAVY_NUM_GPU", "0"))
+
+    # Mid tier
+    OLLAMA_MID_MODEL: str = os.getenv("OLLAMA_MID_MODEL", "mistral:7b")
+    OLLAMA_MID_MAX_CONCURRENT: int = int(os.getenv("OLLAMA_MID_MAX_CONCURRENT", "2"))
+    OLLAMA_MID_NUM_THREAD: int = int(os.getenv("OLLAMA_MID_NUM_THREAD", "2"))
+    OLLAMA_MID_NUM_GPU: int = int(os.getenv("OLLAMA_MID_NUM_GPU", "0"))
+
+    # Light tier
+    OLLAMA_LIGHT_MODEL: str = os.getenv("OLLAMA_LIGHT_MODEL", "phi3:mini")
+    OLLAMA_LIGHT_MAX_CONCURRENT: int = int(os.getenv("OLLAMA_LIGHT_MAX_CONCURRENT", "2"))
+    OLLAMA_LIGHT_NUM_THREAD: int = int(os.getenv("OLLAMA_LIGHT_NUM_THREAD", "1"))
+    OLLAMA_LIGHT_NUM_GPU: int = int(os.getenv("OLLAMA_LIGHT_NUM_GPU", "0"))
+
+    # Supabase
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
 
-    # ── ChromaDB ─────────────────────────────────────────────
+    # ChromaDB
     CHROMA_PERSIST_PATH: str = os.getenv(
         "CHROMA_PERSIST_PATH",
         str(Path(__file__).resolve().parent / "chroma_db"),
     )
 
-    # ── Chunking ─────────────────────────────────────────────
+    # Chunking
     CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "512"))
     CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "64"))
 
-    # ── Academic APIs (source gathering) ─────────────────────
+    # Academic search APIs, not text generation providers
     SEMANTIC_SCHOLAR_API_KEY: str = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")
     TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
-
-    # ── Rate Limiting ────────────────────────────────────────
-    # NIM free tier: ~40 req/min per model. We target 35 to stay safe.
-    NIM_MAX_RPM: int = int(os.getenv("NIM_MAX_RPM", "35"))
 
 
 settings = Settings()
