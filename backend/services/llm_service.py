@@ -1,112 +1,98 @@
-# ============================================================
-# GenResearch — LLM Service (NVIDIA NIM Router)
-# Role-based model selection via OpenAI-compatible NIM API.
-#
-# Design rules (from Master Spec §2):
-#   - All text-generation goes through NVIDIA NIM, never local Ollama.
-#   - Embeddings stay on local Ollama (handled by embedder.py).
-#   - Draft Agent → nemotron-3.5-lightning-30b-a3b
-#   - All evaluators/critics/questionnaire → nemotron-3-nano
-#   - Citation verification MUST use a different model than Draft.
-#   - Rate limit: ~35 req/min per model (free tier ceiling).
-# ============================================================
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import time
 from typing import AsyncIterator
 
-from openai import AsyncOpenAI
+import httpx
+from tenacity import (
+    RetryError,
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from config import settings
+from services.llm_models import ModelSpec, get_chain_for_role
 
 logger = logging.getLogger(__name__)
 
-# ── Agent Role → Model Mapping ───────────────────────────────
-# Deliberately chosen per spec §2.2. Not arbitrary.
-ROLE_MODEL_MAP: dict[str, str] = {
-    # Heavy reasoning / long-form generation
-    "draft": settings.NVIDIA_DRAFT_MODEL,
 
-    # Cheap / fast for evaluation, critique, questionnaire
-    "questionnaire": settings.NVIDIA_EVAL_MODEL,
-    "sufficiency_evaluator": settings.NVIDIA_EVAL_MODEL,
-    "user_doc_quality_eval": settings.NVIDIA_EVAL_MODEL,
-    "gap_report": settings.NVIDIA_EVAL_MODEL,
-    "outline_plan": settings.NVIDIA_EVAL_MODEL,
-    "source_quality_evaluator": settings.NVIDIA_EVAL_MODEL,
-    "citation_verification": settings.NVIDIA_EVAL_MODEL,
-    "section_critic": settings.NVIDIA_EVAL_MODEL,
-    "final_qa": settings.NVIDIA_EVAL_MODEL,
-}
+class NonRetryableLLMError(Exception):
+    """Raised when retrying the same local tier will not help."""
 
 
-# ── Per-Model Rate Limiter ───────────────────────────────────
-class _TokenBucketLimiter:
-    """
-    Simple async token-bucket rate limiter.
-    Ensures we stay under NIM's ~40 req/min free-tier ceiling.
-    """
-
-    def __init__(self, max_rpm: int):
-        self._interval = 60.0 / max_rpm  # seconds between allowed requests
-        self._lock = asyncio.Lock()
-        self._last_request_time = 0.0
-
-    async def acquire(self):
-        async with self._lock:
-            now = time.monotonic()
-            wait = self._interval - (now - self._last_request_time)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self._last_request_time = time.monotonic()
+_semaphores: dict[str, asyncio.Semaphore] = {}
 
 
-# One limiter per model to track independently
-_limiters: dict[str, _TokenBucketLimiter] = {}
+def _semaphore(spec: ModelSpec) -> asyncio.Semaphore:
+    if spec.key not in _semaphores:
+        _semaphores[spec.key] = asyncio.Semaphore(spec.max_concurrent)
+    return _semaphores[spec.key]
 
 
-def _get_limiter(model: str) -> _TokenBucketLimiter:
-    if model not in _limiters:
-        _limiters[model] = _TokenBucketLimiter(settings.NIM_MAX_RPM)
-    return _limiters[model]
+def _is_retryable(error: BaseException) -> bool:
+    status = getattr(getattr(error, "response", None), "status_code", None)
+    if status in (500, 502, 503, 504):
+        return True
+    return isinstance(error, httpx.TimeoutException)
 
 
-# ── NIM Client (singleton) ───────────────────────────────────
-_client: AsyncOpenAI | None = None
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    retry=retry_if_exception(_is_retryable),
+    reraise=True,
+)
+async def _call_ollama_once(
+    spec: ModelSpec,
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int,
+) -> str:
+    system = next((message["content"] for message in messages if message["role"] == "system"), "")
+    user_text = "\n\n".join(
+        message["content"] for message in messages if message["role"] != "system"
+    )
 
+    payload = {
+        "model": spec.model_id,
+        "prompt": user_text,
+        "system": system,
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+            "num_ctx": spec.num_ctx,
+            "num_gpu": spec.num_gpu,
+            "num_thread": spec.num_thread,
+        },
+    }
 
-def _get_client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        if not settings.NVIDIA_API_KEY:
-            raise RuntimeError(
-                "NVIDIA_API_KEY is not set. "
-                "Set it in backend/.env to use NVIDIA NIM for text generation."
-            )
-        _client = AsyncOpenAI(
-            base_url=settings.NVIDIA_BASE_URL,
-            api_key=settings.NVIDIA_API_KEY,
-        )
-    return _client
-
-
-# ── Public API ───────────────────────────────────────────────
-
-def get_model_for_role(agent_role: str) -> str:
-    """
-    Resolve an agent role to the model it should use.
-    Raises ValueError if the role is unknown.
-    """
-    model = ROLE_MODEL_MAP.get(agent_role)
-    if model is None:
-        raise ValueError(
-            f"Unknown agent role '{agent_role}'. "
-            f"Valid roles: {sorted(ROLE_MODEL_MAP.keys())}"
-        )
-    return model
+    async with _semaphore(spec):
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(
+                    f"{settings.OLLAMA_BASE_URL}/api/generate",
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data.get("response", "").strip()
+        except httpx.ConnectError as error:
+            raise NonRetryableLLMError(
+                f"Cannot reach Ollama at {settings.OLLAMA_BASE_URL} for "
+                f"{spec.model_id}. Is `ollama serve` running?"
+            ) from error
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code == 404:
+                raise NonRetryableLLMError(
+                    f"Model '{spec.model_id}' is not pulled locally. "
+                    f"Run: ollama pull {spec.model_id}"
+                ) from error
+            raise
 
 
 async def call_llm(
@@ -116,78 +102,51 @@ async def call_llm(
     system: str = "",
     temperature: float = 0.3,
     max_tokens: int = 2048,
-    response_format: dict | None = None,
 ) -> str:
-    """
-    Send a prompt to NVIDIA NIM and return the full response text.
-
-    Args:
-        prompt:          The user message / task instruction.
-        agent_role:      Which agent is calling (determines model selection).
-        system:          System prompt to guide model behavior.
-        temperature:     Sampling temperature.
-        max_tokens:      Maximum tokens to generate.
-        response_format: Optional response format (e.g. {"type": "json_object"}).
-
-    Returns:
-        The model's text response as a string.
-    """
-    model = get_model_for_role(agent_role)
-    client = _get_client()
-    limiter = _get_limiter(model)
-
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-
-    logger.info(
-        "llm_request",
-        extra={
-            "agent_role": agent_role,
-            "model": model,
-            "prompt_length": len(prompt),
-            "has_system": bool(system),
-        },
+    chain = get_chain_for_role(agent_role)
+    messages = (
+        ([{"role": "system", "content": system}] if system else [])
+        + [{"role": "user", "content": prompt}]
     )
 
-    await limiter.acquire()
-
-    kwargs: dict = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    if response_format:
-        kwargs["response_format"] = response_format
-
-    try:
-        response = await client.chat.completions.create(**kwargs)
-        result = response.choices[0].message.content.strip()
-
-        logger.info(
-            "llm_response",
-            extra={
-                "agent_role": agent_role,
-                "model": model,
-                "response_length": len(result),
-                "usage": {
-                    "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                    "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+    last_error: BaseException | None = None
+    for index, spec in enumerate(chain):
+        try:
+            logger.info(
+                "llm_request",
+                extra={
+                    "agent_role": agent_role,
+                    "tier": spec.key,
+                    "attempt_index": index,
                 },
-            },
-        )
-        return result
+            )
+            result = await _call_ollama_once(spec, messages, temperature, max_tokens)
+            logger.info(
+                "llm_response",
+                extra={
+                    "agent_role": agent_role,
+                    "tier": spec.key,
+                    "response_length": len(result),
+                },
+            )
+            return result
+        except (NonRetryableLLMError, RetryError) as error:
+            logger.warning(
+                "llm_tier_failed_falling_back",
+                extra={"agent_role": agent_role, "tier": spec.key, "error": str(error)},
+            )
+            last_error = error
+        except Exception as error:
+            logger.error(
+                "llm_unexpected_error",
+                extra={"agent_role": agent_role, "tier": spec.key, "error": str(error)},
+            )
+            last_error = error
 
-    except Exception as e:
-        logger.error(
-            "llm_error",
-            extra={"agent_role": agent_role, "model": model, "error": str(e)},
-        )
-        raise RuntimeError(
-            f"NIM call failed for role '{agent_role}' (model: {model}): {e}"
-        ) from e
+    raise RuntimeError(
+        f"All local tiers failed for role '{agent_role}'. "
+        f"Chain tried: {[spec.key for spec in chain]}. Last error: {last_error}"
+    ) from last_error
 
 
 async def call_llm_stream(
@@ -198,45 +157,57 @@ async def call_llm_stream(
     temperature: float = 0.3,
     max_tokens: int = 2048,
 ) -> AsyncIterator[str]:
-    """
-    Stream tokens from NVIDIA NIM. Yields raw token strings.
-
-    Same arguments as call_llm (minus response_format).
-    """
-    model = get_model_for_role(agent_role)
-    client = _get_client()
-    limiter = _get_limiter(model)
-
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-
-    logger.info(
-        "llm_stream_request",
-        extra={"agent_role": agent_role, "model": model, "prompt_length": len(prompt)},
+    chain = get_chain_for_role(agent_role)
+    messages = (
+        ([{"role": "system", "content": system}] if system else [])
+        + [{"role": "user", "content": prompt}]
+    )
+    system_msg = next((message["content"] for message in messages if message["role"] == "system"), "")
+    user_text = "\n\n".join(
+        message["content"] for message in messages if message["role"] != "system"
     )
 
-    await limiter.acquire()
+    last_error: BaseException | None = None
+    for spec in chain:
+        payload = {
+            "model": spec.model_id,
+            "prompt": user_text,
+            "system": system_msg,
+            "stream": True,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+                "num_ctx": spec.num_ctx,
+                "num_gpu": spec.num_gpu,
+                "num_thread": spec.num_thread,
+            },
+        }
+        try:
+            async with _semaphore(spec):
+                async with httpx.AsyncClient(timeout=180.0) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{settings.OLLAMA_BASE_URL}/api/generate",
+                        json=payload,
+                    ) as response:
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if not line:
+                                continue
+                            chunk = json.loads(line)
+                            if chunk.get("response"):
+                                yield chunk["response"]
+                            if chunk.get("done"):
+                                return
+            return
+        except Exception as error:
+            logger.warning(
+                "llm_stream_tier_failed_falling_back",
+                extra={"agent_role": agent_role, "tier": spec.key, "error": str(error)},
+            )
+            last_error = error
 
-    try:
-        stream = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=True,
-        )
-
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
-
-    except Exception as e:
-        logger.error(
-            "llm_stream_error",
-            extra={"agent_role": agent_role, "model": model, "error": str(e)},
-        )
-        raise RuntimeError(
-            f"NIM stream failed for role '{agent_role}' (model: {model}): {e}"
-        ) from e
+    raise RuntimeError(
+        f"All local tiers failed to stream for role '{agent_role}'. "
+        f"Last error: {last_error}"
+    ) from last_error
