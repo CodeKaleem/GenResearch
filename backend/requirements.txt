@@ -8,8 +8,8 @@ langchain-text-splitters
 langchain-core
 langgraph
 httpx
+tenacity
 python-dotenv
-openai
 python-docx
 trafilatura
 aiohttp
