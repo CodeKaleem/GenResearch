@@ -1,3 +1,5 @@
+import asyncio
+
 # ============================================================
 # GenResearch — Summarization Agent
 # Generates structured summaries of research papers using RAG
@@ -27,9 +29,7 @@ async def run_summarization(
     semantic search and generates a structured summary.
     Returns a dict with summaries list and metadata.
     """
-    summaries: list[dict] = []
-
-    for paper_id in paper_ids:
+    async def summarize_paper(paper_id: str) -> dict:
         # Retrieve extensive chunks for this paper
         chunks = await semantic_search(
             user_id=user_id,
@@ -39,13 +39,12 @@ async def run_summarization(
         )
 
         if not chunks:
-            summaries.append({
+            return {
                 "paper_id": paper_id,
                 "title": "Unknown",
                 "summary": "No content found for this paper. It may not be indexed yet.",
                 "status": "empty",
-            })
-            continue
+            }
 
         title = chunks[0].get("title", "Untitled Paper")
 
@@ -66,18 +65,21 @@ Generate the summary now:"""
 
         summary_text = await call_llm(
             prompt=prompt,
+            agent_role="summarization",
             system=SUMMARIZATION_SYSTEM,
             temperature=0.3,
             max_tokens=2048,
         )
 
-        summaries.append({
+        return {
             "paper_id": paper_id,
             "title": title,
             "summary": summary_text,
             "chunks_used": len(chunks),
             "status": "completed",
-        })
+        }
+
+    summaries = await asyncio.gather(*(summarize_paper(paper_id) for paper_id in paper_ids))
 
     return {
         "agent": "summarization",

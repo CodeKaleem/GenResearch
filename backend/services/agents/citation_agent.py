@@ -1,3 +1,5 @@
+import asyncio
+
 # ============================================================
 # GenResearch — Citation Agent
 # Extracts and formats citations from research papers
@@ -36,9 +38,7 @@ async def run_citation_extraction(
     Extract and format citations from papers.
     """
     style_desc = CITATION_STYLES.get(style.lower(), CITATION_STYLES["apa"])
-    all_citations: list[dict] = []
-
-    for paper_id in paper_ids:
+    async def extract_paper(paper_id: str) -> dict:
         # Search for references/bibliography sections
         chunks = await semantic_search(
             user_id=user_id,
@@ -48,14 +48,13 @@ async def run_citation_extraction(
         )
 
         if not chunks:
-            all_citations.append({
+            return {
                 "paper_id": paper_id,
                 "title": "Unknown",
                 "citations_text": "No content found for this paper.",
                 "count": 0,
                 "status": "empty",
-            })
-            continue
+            }
 
         title = chunks[0].get("title", "Untitled Paper")
 
@@ -77,19 +76,24 @@ Extract and format all citations found:"""
 
         citations_text = await call_llm(
             prompt=prompt,
+            agent_role="citation_extraction",
             system=CITATION_SYSTEM,
             temperature=0.2,
             max_tokens=3000,
         )
 
-        all_citations.append({
+        return {
             "paper_id": paper_id,
             "title": title,
             "citations_text": citations_text,
             "style": style.upper(),
             "chunks_used": len(chunks),
             "status": "completed",
-        })
+        }
+
+    all_citations = await asyncio.gather(
+        *(extract_paper(paper_id) for paper_id in paper_ids)
+    )
 
     return {
         "agent": "citation",

@@ -83,6 +83,7 @@ Generate the literature review now:"""
 
     review_text = await call_llm(
         prompt=prompt,
+        agent_role="literature_review",
         system=LITERATURE_REVIEW_SYSTEM,
         temperature=0.4,
         max_tokens=3000,
