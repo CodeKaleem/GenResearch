@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 import json as json_lib
+import operator
 from typing import TypedDict, Annotated
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, START, END
 
 from services.llm_service import call_llm
 from services.rag_service import semantic_search
@@ -24,15 +25,15 @@ class ProposalState(TypedDict):
     topic: str
     # Intermediate results from sub-agents
     topic_analysis: str
-    relevant_chunks: list[dict]
+    relevant_chunks: Annotated[list[dict], operator.add]
     summaries: list[dict]
     literature_review: str
     citations: str
     # Final output
     proposal: str
     status: str
-    current_step: str
-    steps_log: list[str]
+    current_step: Annotated[str, lambda _previous, current: current]
+    steps_log: Annotated[list[str], operator.add]
 
 
 # ── Node Functions ────────────────────────────────────────────
@@ -76,6 +77,7 @@ Be specific, academic, and grounded in the available literature."""
 
     analysis = await call_llm(
         prompt=prompt,
+        agent_role="topic_analysis",
         system="You are an expert research methodology advisor specializing in defining research scope and objectives.",
         temperature=0.3,
         max_tokens=1500,
@@ -85,7 +87,7 @@ Be specific, academic, and grounded in the available literature."""
         "topic_analysis": analysis,
         "relevant_chunks": chunks,
         "current_step": "topic_analysis",
-        "steps_log": state.get("steps_log", []) + ["✓ Topic analysis completed"],
+        "steps_log": ["✓ Topic analysis completed"],
     }
 
 
@@ -128,7 +130,7 @@ async def retrieve_literature(state: ProposalState) -> dict:
     return {
         "relevant_chunks": all_chunks[:30],  # Keep top 30
         "current_step": "literature_retrieval",
-        "steps_log": state.get("steps_log", []) + [
+        "steps_log": [
             f"✓ Retrieved {len(all_chunks)} relevant excerpts from {len(paper_ids)} papers"
         ],
     }
@@ -146,7 +148,7 @@ async def generate_summaries(state: ProposalState) -> dict:
     return {
         "summaries": result["summaries"],
         "current_step": "summarization",
-        "steps_log": state.get("steps_log", []) + [
+        "steps_log": [
             f"✓ Generated summaries for {len(result['summaries'])} papers"
         ],
     }
@@ -165,7 +167,7 @@ async def generate_lit_review(state: ProposalState) -> dict:
     return {
         "literature_review": result["review"],
         "current_step": "literature_review",
-        "steps_log": state.get("steps_log", []) + [
+        "steps_log": [
             f"✓ Literature review generated ({result['papers_analyzed']} papers analyzed)"
         ],
     }
@@ -189,7 +191,7 @@ async def generate_citations(state: ProposalState) -> dict:
     return {
         "citations": citations_combined,
         "current_step": "citation_extraction",
-        "steps_log": state.get("steps_log", []) + [
+        "steps_log": [
             f"✓ Citations extracted from {result['total_papers']} papers (APA format)"
         ],
     }
@@ -277,6 +279,7 @@ IMPORTANT FORMATTING RULES:
 
     proposal = await call_llm(
         prompt=prompt,
+        agent_role="proposal_composition",
         system="""You are an expert academic proposal writer. You produce publication-quality
 research proposals that follow international academic standards. Your proposals are
 well-structured, thoroughly referenced, and demonstrate deep understanding of the
@@ -288,7 +291,7 @@ research landscape. Use formal academic language with proper paragraph structure
     return {
         "proposal": proposal,
         "current_step": "proposal_composition",
-        "steps_log": state.get("steps_log", []) + [
+        "steps_log": [
             "✓ Research proposal composed and formatted"
         ],
     }
@@ -317,6 +320,7 @@ Return the IMPROVED and FINALIZED version of the complete proposal:"""
 
     reviewed = await call_llm(
         prompt=prompt,
+        agent_role="proposal_review",
         system="""You are a senior academic reviewer. Polish and improve the proposal
 while maintaining its structure and content. Fix any gaps, improve clarity,
 and ensure it meets publication standards.""",
@@ -328,7 +332,7 @@ and ensure it meets publication standards.""",
         "proposal": reviewed,
         "status": "completed",
         "current_step": "review",
-        "steps_log": state.get("steps_log", []) + [
+        "steps_log": [
             "✓ Quality review completed — proposal finalized"
         ],
     }
@@ -340,10 +344,10 @@ def build_proposal_graph() -> StateGraph:
     """
     Construct the LangGraph StateGraph for the proposal workflow.
 
-    Flow:
-    analyze_topic → retrieve_literature → generate_summaries
-        → generate_lit_review → generate_citations
-        → compose_proposal → review_proposal → END
+    Flow (parallel):
+    START fans out to topic analysis, literature retrieval, summaries,
+    literature review, and citations. Composition waits for all five branches,
+    then review runs last.
     """
     graph = StateGraph(ProposalState)
 
@@ -356,13 +360,16 @@ def build_proposal_graph() -> StateGraph:
     graph.add_node("compose_proposal", compose_proposal)
     graph.add_node("review_proposal", review_proposal)
 
-    # Define the linear flow
-    graph.set_entry_point("analyze_topic")
-    graph.add_edge("analyze_topic", "retrieve_literature")
-    graph.add_edge("retrieve_literature", "generate_summaries")
-    graph.add_edge("generate_summaries", "generate_lit_review")
-    graph.add_edge("generate_lit_review", "generate_citations")
-    graph.add_edge("generate_citations", "compose_proposal")
+    # Fan out independent research tasks and fan them back into composition.
+    for node in (
+        "analyze_topic",
+        "retrieve_literature",
+        "generate_summaries",
+        "generate_lit_review",
+        "generate_citations",
+    ):
+        graph.add_edge(START, node)
+        graph.add_edge(node, "compose_proposal")
     graph.add_edge("compose_proposal", "review_proposal")
     graph.add_edge("review_proposal", END)
 
