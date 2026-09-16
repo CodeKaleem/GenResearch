@@ -16,6 +16,7 @@ from tenacity import (
 
 from config import settings
 from services.llm_models import ModelSpec, get_chain_for_role
+from services import request_context, tracking
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ async def _call_ollama_once(
     messages: list[dict],
     temperature: float,
     max_tokens: int,
-) -> str:
+) -> tuple[str, dict]:
     payload = {
         "model": spec.model_id,
         "messages": messages,
@@ -75,7 +76,7 @@ async def _call_ollama_once(
                 )
                 response.raise_for_status()
                 data = response.json()
-                return data["choices"][0]["message"]["content"].strip()
+                return data["choices"][0]["message"]["content"].strip(), data.get("usage", {}) or {}
         except httpx.ConnectError as error:
             raise NonRetryableLLMError(
                 f"Cannot reach Ollama at {settings.OLLAMA_BASE_URL} for "
@@ -115,7 +116,7 @@ async def call_llm(
                     "attempt_index": index,
                 },
             )
-            result = await _call_ollama_once(spec, messages, temperature, max_tokens)
+            result, usage = await _call_ollama_once(spec, messages, temperature, max_tokens)
             logger.info(
                 "llm_response",
                 extra={
@@ -123,6 +124,12 @@ async def call_llm(
                     "tier": spec.key,
                     "response_length": len(result),
                 },
+            )
+            tracking.log_api_cost(
+                agent=agent_role,
+                model=spec.model_id,
+                tokens_used=int(usage.get("total_tokens") or 0),
+                user_id=request_context.get_user_id(),
             )
             return result
         except (NonRetryableLLMError, RetryError) as error:
