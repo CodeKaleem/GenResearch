@@ -27,6 +27,11 @@ class NonRetryableLLMError(Exception):
 _semaphores: dict[str, asyncio.Semaphore] = {}
 
 
+def _chat_completions_url() -> str:
+    base_url = settings.OLLAMA_BASE_URL.rstrip("/")
+    return f"{base_url}/chat/completions" if base_url.endswith("/v1") else f"{base_url}/v1/chat/completions"
+
+
 def _semaphore(spec: ModelSpec) -> asyncio.Semaphore:
     if spec.key not in _semaphores:
         _semaphores[spec.key] = asyncio.Semaphore(spec.max_concurrent)
@@ -52,35 +57,25 @@ async def _call_ollama_once(
     temperature: float,
     max_tokens: int,
 ) -> str:
-    system = next((message["content"] for message in messages if message["role"] == "system"), "")
-    user_text = "\n\n".join(
-        message["content"] for message in messages if message["role"] != "system"
-    )
-
     payload = {
         "model": spec.model_id,
-        "prompt": user_text,
-        "system": system,
+        "messages": messages,
         "stream": False,
-        "options": {
-            "temperature": temperature,
-            "num_predict": max_tokens,
-            "num_ctx": spec.num_ctx,
-            "num_gpu": spec.num_gpu,
-            "num_thread": spec.num_thread,
-        },
+        "temperature": temperature,
+        "max_tokens": max_tokens,
     }
 
     async with _semaphore(spec):
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.post(
-                    f"{settings.OLLAMA_BASE_URL}/api/generate",
+                    _chat_completions_url(),
+                    headers={"Authorization": "Bearer ollama"},
                     json=payload,
                 )
                 response.raise_for_status()
                 data = response.json()
-                return data.get("response", "").strip()
+                return data["choices"][0]["message"]["content"].strip()
         except httpx.ConnectError as error:
             raise NonRetryableLLMError(
                 f"Cannot reach Ollama at {settings.OLLAMA_BASE_URL} for "
@@ -162,43 +157,36 @@ async def call_llm_stream(
         ([{"role": "system", "content": system}] if system else [])
         + [{"role": "user", "content": prompt}]
     )
-    system_msg = next((message["content"] for message in messages if message["role"] == "system"), "")
-    user_text = "\n\n".join(
-        message["content"] for message in messages if message["role"] != "system"
-    )
 
     last_error: BaseException | None = None
     for spec in chain:
         payload = {
             "model": spec.model_id,
-            "prompt": user_text,
-            "system": system_msg,
+            "messages": messages,
             "stream": True,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-                "num_ctx": spec.num_ctx,
-                "num_gpu": spec.num_gpu,
-                "num_thread": spec.num_thread,
-            },
+            "temperature": temperature,
+            "max_tokens": max_tokens,
         }
         try:
             async with _semaphore(spec):
                 async with httpx.AsyncClient(timeout=180.0) as client:
                     async with client.stream(
                         "POST",
-                        f"{settings.OLLAMA_BASE_URL}/api/generate",
+                        _chat_completions_url(),
+                        headers={"Authorization": "Bearer ollama"},
                         json=payload,
                     ) as response:
                         response.raise_for_status()
                         async for line in response.aiter_lines():
-                            if not line:
+                            if not line or not line.startswith("data:"):
                                 continue
-                            chunk = json.loads(line)
-                            if chunk.get("response"):
-                                yield chunk["response"]
-                            if chunk.get("done"):
+                            data = line.removeprefix("data:").strip()
+                            if data == "[DONE]":
                                 return
+                            chunk = json.loads(data)
+                            content = chunk["choices"][0].get("delta", {}).get("content")
+                            if content:
+                                yield content
             return
         except Exception as error:
             logger.warning(
