@@ -141,6 +141,7 @@ export default function FindPapers() {
                 <p style={{ ...bodyText, color: C.inkDark, fontSize: 14, lineHeight: 1.55, marginBottom: 10 }}>{paper.abstract}</p>
                 <div style={{ display: "flex", gap: 14, alignItems: "center", fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 12 }}>
                   <span style={{ border: `1px solid ${C.border}`, padding: "3px 8px", color: C.inkLight }}>{paper.citations} citations</span>
+                  <span style={{ color: C.inkLight }}>{paper.source.replace("_", " ")}</span>
                   {paper.url && <a href={paper.url} target="_blank" rel="noreferrer" style={{ color: C.blue, borderBottom: `1px solid ${C.blue}`, textDecoration: "none" }}>View source</a>}
                 </div>
               </div>
