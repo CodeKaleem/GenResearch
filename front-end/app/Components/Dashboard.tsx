@@ -8,6 +8,7 @@ import Results from "./Results";
 import Citations from "./Citations";
 import Library from "./Library";
 import Settings from "./Settings";
+import FindPapers from "./FindPapers";
 import { supabase } from "../../lib/supabase";
 import { 
   getProfile, 
@@ -304,6 +305,7 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
     { icon: "◈", label: "Results", badge: dbResults.length || undefined },
     { icon: "◎", label: "Citations" },
     { icon: "⊞", label: "Library" },
+    { icon: "⌕", label: "Find Papers" },
     { icon: "◌", label: "Settings" },
   ];
 
@@ -422,6 +424,7 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
             {activeNav === "Results" && <Results />}
             {activeNav === "Citations" && <Citations />}
             {activeNav === "Library" && <Library />}
+            {activeNav === "Find Papers" && <FindPapers />}
             {activeNav === "Settings" && <Settings />}
           </>
         )}
