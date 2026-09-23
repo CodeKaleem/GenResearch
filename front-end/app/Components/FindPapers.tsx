@@ -77,7 +77,7 @@ export default function FindPapers() {
             <button
               key={item}
               type="button"
-              onClick={() => { setMode(item); setStatus(""); }}
+              onClick={() => { setMode(item); setStatus(""); if (item === "topic") setFile(null); }}
               aria-pressed={mode === item}
               style={{
                 border: "none", borderBottom: `2px solid ${mode === item ? C.gold : "transparent"}`,
