@@ -10,6 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from services.pdf_extractor import extract_text_from_pdf
 from services.source_gathering import (
+    API_TIMEOUT,
     search_arxiv,
     search_crossref,
     search_openalex,
@@ -76,7 +77,7 @@ async def search_papers(
         raise HTTPException(status_code=400, detail="Enter a topic or upload a document.")
 
     limit = max(1, min(20, num_papers))
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(timeout=API_TIMEOUT) as session:
         responses = await asyncio.gather(
             search_semantic_scholar(query, limit=limit, session=session),
             search_arxiv(query, limit=limit, session=session),
