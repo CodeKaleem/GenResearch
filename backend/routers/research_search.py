@@ -18,12 +18,16 @@ from services.source_gathering import (
 )
 
 router = APIRouter(tags=["research search"])
+MAX_DISCOVERY_DOCUMENT_BYTES = 25 * 1024 * 1024
 
 
 async def _query_from_document(document: UploadFile) -> str:
     if not document.filename or not document.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
-    text = await extract_text_from_pdf(await document.read())
+    file_bytes = await document.read()
+    if len(file_bytes) > MAX_DISCOVERY_DOCUMENT_BYTES:
+        raise HTTPException(status_code=413, detail="Discovery PDFs must be 25 MB or smaller.")
+    text = await extract_text_from_pdf(file_bytes)
     query = re.sub(r"\s+", " ", text).strip()
     if not query:
         query = document.filename.rsplit(".", 1)[0].replace("_", " ")
