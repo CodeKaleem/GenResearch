@@ -10,6 +10,7 @@ from routers.chat import router as chat_router
 from routers.pipeline import router as pipeline_router
 from routers.reports import router as reports_router
 from routers.agent_tasks import router as agent_tasks_router
+from routers.research_search import router as research_search_router
 from services.logging_bridge import install_supabase_log_handler
 
 app = FastAPI(
@@ -33,6 +34,7 @@ app.include_router(chat_router)
 app.include_router(pipeline_router)
 app.include_router(reports_router)
 app.include_router(agent_tasks_router)
+app.include_router(research_search_router)
 
 install_supabase_log_handler()
 
