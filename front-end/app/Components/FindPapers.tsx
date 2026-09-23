@@ -94,6 +94,7 @@ export default function FindPapers() {
             <span style={{ ...sectionLabel, display: "block", marginBottom: 8 }}>Research topic</span>
             <input
               value={topic}
+              aria-label="Research topic"
               onChange={(event) => setTopic(event.target.value)}
               onKeyDown={(event) => { if (event.key === "Enter") search(); }}
               placeholder="e.g. transformer models for low-resource languages"
