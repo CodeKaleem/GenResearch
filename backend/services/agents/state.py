@@ -39,6 +39,26 @@ def _last_value(left: str, right: str) -> str:
     return right if right else left
 
 
+class SectionContext(TypedDict, total=False):
+    """Per-section working context used by the drafting stage."""
+    section_name: str
+    section_goal: str
+    assigned_sources: list[dict]
+    claims: list[dict]
+    figure_slots: list[dict]
+    narrative_prompt: str
+
+
+class FigureSlot(TypedDict, total=False):
+    """Placeholder metadata for an eventual figure render step."""
+    id: str
+    section_name: str
+    kind: str
+    caption: str
+    reason: str
+    source_id: str
+
+
 class ProposalState(TypedDict, total=False):
     """
     Every node reads from and writes to this single shared object.
@@ -86,6 +106,12 @@ class ProposalState(TypedDict, total=False):
     # Written by Branch A only — Branch B does NOT touch this key.
     outline: dict
 
+    # ── Stage 5b: Section-level drafting context ──────────────
+    # Per-section evidence bundle, allowing drafting to cite assigned
+    # sources and reserve figure slots without rendering them.
+    section_contexts: list[SectionContext]
+    figure_slots: list[FigureSlot]
+
     # ── Stage 6 (Branch B): Source Gathering ──────────────────
     user_provided_sources: list[dict]
     scraped_sources: list[dict]
@@ -103,6 +129,8 @@ class ProposalState(TypedDict, total=False):
 
     # ── Stage 10: Draft Agent ────────────────────────────────
     draft_text: str
+    generated_sections: list[dict]
+    proposal_output: dict
 
     # ── Stage 11 (Branch C): Citation/Claim Verification ─────
     # { verified_count, unverified_claims: [...], score, details }
