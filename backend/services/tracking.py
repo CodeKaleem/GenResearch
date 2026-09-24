@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from database.supabase_client import get_supabase
+from services import request_context
 
 logger = logging.getLogger(__name__)
 
@@ -99,4 +100,47 @@ def log_api_cost(agent: str, model: str, tokens_used: int = 0, cost_usd: float =
         "tokens_used": tokens_used,
         "cost_usd": cost_usd,
         "user_id": user_id,
+    })
+
+
+def save_generated_claim(
+    session_id: str,
+    section: str,
+    claim_text: str,
+    cited_chunk_ids: list[str],
+    verdict: str,
+    discrepancy: str | None = None,
+    corrected_text: str | None = None,
+) -> None:
+    """Persist verification evidence without making generation depend on DB health."""
+    if not session_id:
+        return
+    _insert("generated_claims", {
+        "session_id": session_id,
+        "section": section,
+        "claim_text": claim_text[:10000],
+        "cited_chunk_ids": cited_chunk_ids,
+        "verdict": verdict,
+        "discrepancy": discrepancy,
+        "corrected_text": corrected_text,
+    })
+
+
+def log_audit_event(
+    node_name: str,
+    session_id: str | None = None,
+    model_used: str | None = None,
+    prompt_hash: str | None = None,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    latency_ms: int = 0,
+) -> None:
+    _insert("audit_log", {
+        "session_id": session_id or request_context.get_session_id(),
+        "node_name": node_name,
+        "model_used": model_used,
+        "prompt_hash": prompt_hash,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "latency_ms": latency_ms,
     })
