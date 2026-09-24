@@ -22,22 +22,25 @@ class Settings:
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 
     # Heavy tier
-    OLLAMA_HEAVY_MODEL: str = os.getenv("OLLAMA_HEAVY_MODEL", "llama3.1:8b")
+    OLLAMA_HEAVY_MODEL: str = os.getenv("OLLAMA_HEAVY_MODEL", "qwen3:8b")
     OLLAMA_HEAVY_MAX_CONCURRENT: int = int(os.getenv("OLLAMA_HEAVY_MAX_CONCURRENT", "1"))
     OLLAMA_HEAVY_NUM_THREAD: int = int(os.getenv("OLLAMA_HEAVY_NUM_THREAD", "5"))
     OLLAMA_HEAVY_NUM_GPU: int = int(os.getenv("OLLAMA_HEAVY_NUM_GPU", "0"))
 
     # Mid tier
-    OLLAMA_MID_MODEL: str = os.getenv("OLLAMA_MID_MODEL", "mistral:7b")
+    OLLAMA_MID_MODEL: str = os.getenv("OLLAMA_MID_MODEL", "qwen3:4b-instruct-2507")
     OLLAMA_MID_MAX_CONCURRENT: int = int(os.getenv("OLLAMA_MID_MAX_CONCURRENT", "2"))
     OLLAMA_MID_NUM_THREAD: int = int(os.getenv("OLLAMA_MID_NUM_THREAD", "2"))
     OLLAMA_MID_NUM_GPU: int = int(os.getenv("OLLAMA_MID_NUM_GPU", "0"))
 
     # Light tier
-    OLLAMA_LIGHT_MODEL: str = os.getenv("OLLAMA_LIGHT_MODEL", "phi3:mini")
+    OLLAMA_LIGHT_MODEL: str = os.getenv("OLLAMA_LIGHT_MODEL", "phi4-mini")
     OLLAMA_LIGHT_MAX_CONCURRENT: int = int(os.getenv("OLLAMA_LIGHT_MAX_CONCURRENT", "2"))
     OLLAMA_LIGHT_NUM_THREAD: int = int(os.getenv("OLLAMA_LIGHT_NUM_THREAD", "1"))
     OLLAMA_LIGHT_NUM_GPU: int = int(os.getenv("OLLAMA_LIGHT_NUM_GPU", "0"))
+    OLLAMA_HEAVY_CONTEXT: int = int(os.getenv("OLLAMA_HEAVY_CONTEXT", "6000"))
+    OLLAMA_MID_CONTEXT: int = int(os.getenv("OLLAMA_MID_CONTEXT", "8000"))
+    OLLAMA_LIGHT_CONTEXT: int = int(os.getenv("OLLAMA_LIGHT_CONTEXT", "4000"))
 
     # Supabase
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
