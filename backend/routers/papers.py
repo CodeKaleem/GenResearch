@@ -12,7 +12,10 @@ from fastapi.responses import FileResponse
 from database.supabase_client import get_supabase
 from services.pdf_extractor import extract_text_from_pdf, get_pdf_page_count
 from services.chunker import chunk_text
-from services.chroma_service import store_chunks, delete_paper_chunks
+from services.chroma_service import store_chunks, store_structured_chunks, delete_paper_chunks
+from ingestion import chunk_document, parse_pdf
+from ingestion.pdf_parser import ParsedBlock
+from ingestion.table_extractor import extract_tables
 
 logger = logging.getLogger(__name__)
 
@@ -114,14 +117,33 @@ async def upload_paper(
             raise ValueError("No text could be extracted from the PDF.")
 
         pages = await get_pdf_page_count(file_bytes)
-        chunks = chunk_text(text)
-        num_chunks = await store_chunks(
-            user_id=user_id,
-            paper_id=paper_id,
-            chunks=chunks,
-            title=paper_title,
-            collection_name=collection,
+        parsed_blocks = parse_pdf(file_bytes)
+        parsed_blocks.extend(
+            ParsedBlock(
+                text=f"Table {table['table']} on page {table['page']}: {table['rows']}",
+                page=table["page"],
+                section_heading=f"Table {table['table']}",
+                is_table=True,
+                table_data={"rows": table["rows"]},
+            )
+            for table in extract_tables(file_bytes)
         )
+        structured_chunks = chunk_document(parsed_blocks, paper_id, paper_title)
+        if structured_chunks:
+            num_chunks = await store_structured_chunks(
+                user_id=user_id,
+                chunks=structured_chunks,
+                collection_name=collection,
+            )
+        else:
+            chunks = chunk_text(text)
+            num_chunks = await store_chunks(
+                user_id=user_id,
+                paper_id=paper_id,
+                chunks=chunks,
+                title=paper_title,
+                collection_name=collection,
+            )
 
         # Step 5: Update Supabase with indexed status
         sb.table("papers").update({

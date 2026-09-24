@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from services.agents.pipeline_graph import build_pipeline_graph
 from database.supabase_client import get_supabase
 from database.chroma_client import get_user_collection
+from services import request_context
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,7 @@ async def stream_pipeline(session_id: str):
     current_state = _pipeline_graph.get_state(config)
     
     async def sse_generator() -> AsyncGenerator[str, None]:
+        session_token = request_context.set_session_id(session_id)
         try:
             # We use astream to yield updates
             async for output in _pipeline_graph.astream(
@@ -187,6 +189,8 @@ async def stream_pipeline(session_id: str):
         except Exception as e:
             logger.error(f"Pipeline error: {e}", exc_info=True)
             yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+        finally:
+            request_context.reset_session_id(session_token)
 
     return StreamingResponse(sse_generator(), media_type="application/x-ndjson")
 
