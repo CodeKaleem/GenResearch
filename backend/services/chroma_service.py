@@ -3,6 +3,7 @@
 # Store, retrieve, and delete paper chunks in ChromaDB
 # ============================================================
 from database.chroma_client import get_user_collection, get_session_collection
+from models.schemas import ChunkMetadata
 from services.embedder import embed_texts
 
 
@@ -12,6 +13,7 @@ async def store_chunks(
     chunks: list[str],
     title: str,
     collection_name: str,
+    metadata: list[ChunkMetadata] | None = None,
 ) -> int:
     """
     Embed and store text chunks in the user's ChromaDB collection.
@@ -25,7 +27,7 @@ async def store_chunks(
     embeddings = await embed_texts(chunks)
 
     # Build IDs, documents, metadata, and embeddings lists
-    ids = [f"{paper_id}_chunk_{i}" for i in range(len(chunks))]
+    ids = [item.chunk_id for item in metadata] if metadata else [f"{paper_id}_chunk_{i}" for i in range(len(chunks))]
     metadatas = [
         {
             "paper_id": paper_id,
@@ -33,6 +35,7 @@ async def store_chunks(
             "chunk_index": i,
             "title": title,
             "collection": collection_name,
+            **(metadata[i].model_dump(exclude_none=True) if metadata else {}),
         }
         for i in range(len(chunks))
     ]
@@ -47,6 +50,25 @@ async def store_chunks(
     )
 
     return len(chunks)
+
+
+async def store_structured_chunks(
+    user_id: str,
+    chunks: list[tuple[ChunkMetadata, str]],
+    collection_name: str,
+) -> int:
+    """Store provenance-aware chunks produced by ``ingestion.chunk_document``."""
+    if not chunks:
+        return 0
+    metadata, documents = zip(*chunks)
+    return await store_chunks(
+        user_id=user_id,
+        paper_id=metadata[0].paper_id,
+        chunks=list(documents),
+        title=metadata[0].title or "Unknown Document",
+        collection_name=collection_name,
+        metadata=list(metadata),
+    )
 
 
 async def store_chunks_session(
