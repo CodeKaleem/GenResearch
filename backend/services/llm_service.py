@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import hashlib
+import time
 from typing import AsyncIterator
 
 import httpx
@@ -57,6 +59,7 @@ async def _call_ollama_once(
     messages: list[dict],
     temperature: float,
     max_tokens: int,
+    context_limit: int | None = None,
 ) -> tuple[str, dict]:
     payload = {
         "model": spec.model_id,
@@ -64,6 +67,7 @@ async def _call_ollama_once(
         "stream": False,
         "temperature": temperature,
         "max_tokens": max_tokens,
+        "num_ctx": context_limit or spec.num_ctx,
     }
 
     async with _semaphore(spec):
@@ -98,6 +102,7 @@ async def call_llm(
     system: str = "",
     temperature: float = 0.3,
     max_tokens: int = 2048,
+    context_limit: int | None = None,
 ) -> str:
     chain = get_chain_for_role(agent_role)
     messages = (
@@ -106,6 +111,7 @@ async def call_llm(
     )
 
     last_error: BaseException | None = None
+    started_at = time.perf_counter()
     for index, spec in enumerate(chain):
         try:
             logger.info(
@@ -116,7 +122,7 @@ async def call_llm(
                     "attempt_index": index,
                 },
             )
-            result, usage = await _call_ollama_once(spec, messages, temperature, max_tokens)
+            result, usage = await _call_ollama_once(spec, messages, temperature, max_tokens, context_limit)
             logger.info(
                 "llm_response",
                 extra={
@@ -130,6 +136,14 @@ async def call_llm(
                 model=spec.model_id,
                 tokens_used=int(usage.get("total_tokens") or 0),
                 user_id=request_context.get_user_id(),
+            )
+            tracking.log_audit_event(
+                node_name=agent_role,
+                model_used=spec.model_id,
+                prompt_hash=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                tokens_in=int(usage.get("prompt_tokens") or 0),
+                tokens_out=int(usage.get("completion_tokens") or 0),
+                latency_ms=int((time.perf_counter() - started_at) * 1000),
             )
             return result
         except (NonRetryableLLMError, RetryError) as error:
@@ -158,6 +172,7 @@ async def call_llm_stream(
     system: str = "",
     temperature: float = 0.3,
     max_tokens: int = 2048,
+    context_limit: int | None = None,
 ) -> AsyncIterator[str]:
     chain = get_chain_for_role(agent_role)
     messages = (
@@ -173,6 +188,7 @@ async def call_llm_stream(
             "stream": True,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "num_ctx": context_limit or spec.num_ctx,
         }
         try:
             async with _semaphore(spec):

@@ -22,7 +22,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         max_concurrent=settings.OLLAMA_HEAVY_MAX_CONCURRENT,
         num_thread=settings.OLLAMA_HEAVY_NUM_THREAD,
         num_gpu=settings.OLLAMA_HEAVY_NUM_GPU,
-        num_ctx=8192,
+        num_ctx=settings.OLLAMA_HEAVY_CONTEXT,
     ),
     "mid": ModelSpec(
         "mid",
@@ -30,7 +30,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         max_concurrent=settings.OLLAMA_MID_MAX_CONCURRENT,
         num_thread=settings.OLLAMA_MID_NUM_THREAD,
         num_gpu=settings.OLLAMA_MID_NUM_GPU,
-        num_ctx=6144,
+        num_ctx=settings.OLLAMA_MID_CONTEXT,
     ),
     "light": ModelSpec(
         "light",
@@ -38,7 +38,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         max_concurrent=settings.OLLAMA_LIGHT_MAX_CONCURRENT,
         num_thread=settings.OLLAMA_LIGHT_NUM_THREAD,
         num_gpu=settings.OLLAMA_LIGHT_NUM_GPU,
-        num_ctx=4096,
+        num_ctx=settings.OLLAMA_LIGHT_CONTEXT,
     ),
 }
 
@@ -49,9 +49,11 @@ ROLE_MODEL_CHAINS: dict[str, list[str]] = {
     "citation_extraction": ["mid", "light"],
     "literature_review": ["heavy", "mid"],
     "proposal_composition": ["heavy", "mid"],
+    "composer": ["heavy", "mid"],
     "proposal_review": ["mid", "light"],
     "draft": ["heavy", "mid"],
     "citation_verification": ["heavy", "mid"],
+    "verification": ["light", "mid"],
     "sufficiency_evaluator": ["mid", "light"],
     "gap_report": ["mid", "light"],
     "outline_plan": ["mid", "light"],
