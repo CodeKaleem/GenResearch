@@ -19,6 +19,7 @@ from services.agents.nodes.sufficiency_eval import sufficiency_eval_node
 from services.agents.nodes.scrape_permission import scrape_permission_node
 from services.agents.nodes.gap_report import gap_report_node
 from services.agents.nodes.outline_plan import outline_plan_node
+from services.agents.nodes.context_build import context_build_node
 from services.agents.nodes.source_gathering import source_gathering_node
 from services.agents.nodes.source_quality_eval import source_quality_eval_node
 from services.agents.nodes.ingestion import ingestion_node
@@ -118,6 +119,7 @@ def build_pipeline_graph() -> StateGraph:
     workflow.add_node("scrape_permission", scrape_permission_node)
     workflow.add_node("gap_report", gap_report_node)
     workflow.add_node("outline_plan", outline_plan_node)
+    workflow.add_node("context_build", context_build_node)
     workflow.add_node("source_gathering", source_gathering_node)
     workflow.add_node("source_quality_eval", source_quality_eval_node)
     workflow.add_node("ingestion", ingestion_node)
@@ -160,7 +162,8 @@ def build_pipeline_graph() -> StateGraph:
     workflow.add_edge("outline_plan", "merge_ab")
     workflow.add_edge("ingestion", "merge_ab")
     
-    workflow.add_edge("merge_ab", "user_approval")
+    workflow.add_edge("merge_ab", "context_build")
+    workflow.add_edge("context_build", "user_approval")
     workflow.add_edge("user_approval", "draft")
     
     # Fan out to Branch C & D
