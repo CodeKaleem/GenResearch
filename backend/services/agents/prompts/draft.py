@@ -17,35 +17,56 @@ Citation rules:
 - These will be resolved to full citations in post-processing.
 - Every paragraph that makes a factual claim should have at least one citation.
 - Prioritize user-provided sources (tagged "user") over scraped sources.
+- If the citation registry and retrieved source content below are thin or only tangentially \
+    related to the topic, that is a REAL constraint, not a gap to paper over: write shorter, \
+    narrower sections and mark unsupported claims with [CITATION NEEDED] rather than inventing \
+    plausible-sounding detail to fill the space.
+
+Output-structure rules (violating these corrupts the assembled document — follow exactly):
+- Do NOT repeat the section title as the first line of your output, in plain text OR bold \
+    markdown. The heading is inserted automatically by the assembly step; starting your response \
+    with the section name (or a bolded restatement of it) produces a duplicated heading.
+- Do NOT write your own "References," "Bibliography," or "Works Cited" list anywhere in your \
+    output, in any section, including the last one. The complete reference list is generated \
+    automatically from the citation registry after every section is assembled. Any reference list \
+    you write yourself will be fabricated by definition, since you do not have real bibliographic \
+    detail beyond what's in the registry above — do not attempt it.
+- Do NOT insert [FIGURE:...] or similar figure/image placeholder tags. Figure generation is not \
+    currently supported by this pipeline; if a section would benefit from a figure, describe the \
+    data in prose instead of tagging a placeholder for one.
 
 Quality targets:
-- Each section should be substantive (300-800 words depending on section type).
+- Each section should be substantive (300-800 words depending on section type) WHEN the \
+    available sources support that length — do not pad a thinly-sourced section to hit a word \
+    target.
 - Transitions between sections should be smooth.
 - The literature review should synthesize, not just list sources.
 - Methodology should be specific and replicable.
 """
 
-# Few-shot exemplars embedded in prompts per spec §7.4
-# (prompt engineering, not fine-tuning)
+# Few-shot exemplars embedded in prompts per spec §7.4 (prompt engineering, not fine-tuning).
+# These are schematic templates with placeholders only; concrete fake examples can be copied
+# into drafts as unsupported content when the real retrieval context is thin.
 FEW_SHOT_EXEMPLARS = """
-=== EXEMPLAR 1: Good Academic Introduction ===
-The rapid advancement of transformer-based architectures has fundamentally reshaped natural language \
-processing, enabling models to achieve human-level performance across diverse linguistic tasks \
-[CR-001]. However, the computational demands of these models present significant barriers to \
-deployment in resource-constrained environments [CR-002]. This tension between model capability \
-and practical accessibility has motivated a growing body of research into efficient inference \
-techniques [CR-003, CR-004]. The present study addresses this gap by proposing a novel pruning \
-strategy that maintains 95% of baseline performance while reducing computational requirements by 60%.
+=== EXEMPLAR 1: Introduction structure (a template, not real content) ===
+[Broad framing of the field] has [transformed / reshaped / advanced] [domain], enabling \
+[capability] [CR-00X]. However, [a real limitation or tension in the actual sources] presents \
+[challenge] [CR-00Y]. This tension has motivated [type of research direction found in the \
+actual sources] [CR-00Z]. This paper addresses [specific gap, grounded in the real material \
+above] by [approach].
 
-=== EXEMPLAR 2: Good Literature Synthesis ===
-While Smith et al. [CR-005] demonstrated the effectiveness of knowledge distillation for model \
-compression, their approach was limited to encoder-only architectures. In contrast, Chen and \
-Wang [CR-006] extended these techniques to decoder models but reported significant degradation \
-in generative tasks. More recently, Park et al. [CR-007] proposed a hybrid approach combining \
-distillation with structured pruning, achieving promising results on translation benchmarks. \
-However, none of these works addressed the specific challenges posed by multi-modal transformers, \
-which represent the fastest-growing segment of deployed AI systems [CR-008]. This gap in the \
-literature motivates our investigation.
+=== EXEMPLAR 2: Literature-synthesis structure (a template, not real content) ===
+While [Author A, Year] [CR-00X] demonstrated [a real finding from the actual sources], their \
+approach was limited to [a real constraint]. In contrast, [Author B, Year] [CR-00Y] extended \
+this to [a broader case, if the real sources support one] but reported [a real limitation]. \
+[If a third real source exists: More recently, Author C, Year [CR-00Z] proposed [approach], \
+achieving [outcome].] However, [a real remaining gap in the actual sources] motivates \
+[this paper's specific focus].
+
+Remember: every bracketed placeholder above must be filled from the REAL citation registry \
+and RAG context provided below — never from a remembered example, a plausible-sounding study, \
+or a fabricated author name. If the real sources don't support filling a placeholder, omit that \
+sentence or mark the claim [CITATION NEEDED] instead.
 """
 
 
@@ -112,9 +133,18 @@ RETRIEVED SOURCE CONTENT (RAG context):
 {rag_context}
 
 ═══════════════════════════════════════
-STYLE EXEMPLARS (follow this quality level):
+STYLE EXEMPLARS — bracketed TEMPLATES showing structure only, not real content to copy:
 ═══════════════════════════════════════
 {FEW_SHOT_EXEMPLARS}
 
 Now compose the complete research paper draft. Follow the outline structure exactly (taking into account any USER FEEDBACK). \
-Cite sources using their registry IDs (e.g., [CR-001]). Mark any unsupported claims with [CITATION NEEDED]."""
+Cite sources using their registry IDs (e.g., [CR-001]). Mark any unsupported claims with [CITATION NEEDED].
+
+Final reminders before you write:
+- Do not start any section with its own title repeated as text.
+- Do not write a References/Bibliography list yourself, anywhere.
+- Do not insert [FIGURE:...] placeholders.
+- The style exemplars above are templates with bracket placeholders — copying their wording, \
+authors, or subject matter (rather than filling placeholders from the real registry and RAG \
+context) produces a fabricated paper. If the real sources above are thin, write less; do not \
+borrow content from the exemplars to compensate."""
