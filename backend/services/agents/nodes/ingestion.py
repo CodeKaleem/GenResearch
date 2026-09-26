@@ -63,10 +63,12 @@ async def ingestion_node(state: dict) -> dict:
         })
         all_accepted.append({**s, "tag": "scraped", "citation_id": cid})
 
-    # Ingest into session-scoped ChromaDB collection (A6/B1)
+    # Ingest into session-scoped ChromaDB collection (A6/B1).
+    # Prefer the full source text; the abstract snippet is only a short
+    # preview and should be used only when full content is unavailable.
     total_chunks = 0
     for source in all_accepted:
-        content = source.get("abstract_snippet", "") or source.get("content", "")
+        content = source.get("content", "") or source.get("abstract_snippet", "")
         if not content:
             continue
         chunks = chunk_text(content)
