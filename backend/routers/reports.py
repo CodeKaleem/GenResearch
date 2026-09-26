@@ -15,7 +15,7 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 async def get_draft_pdf(session_id: str):
     """Generates and returns the Draft PDF on-demand."""
     sb = get_supabase()
-    res = sb.table("research_reports").select("topic, draft_text").eq("session_id", session_id).execute()
+    res = sb.table("research_reports").select("topic, draft_text, citation_registry").eq("session_id", session_id).execute()
     
     if not res.data:
         raise HTTPException(status_code=404, detail="Report not found for this session.")
@@ -23,11 +23,15 @@ async def get_draft_pdf(session_id: str):
     report = res.data[0]
     topic = report.get("topic", "Research Draft")
     draft_text = report.get("draft_text", "")
+    citation_registry = report.get("citation_registry") or []
     
     if not draft_text:
         raise HTTPException(status_code=404, detail="Draft text not available yet.")
         
-    pdf_bytes = render_markdown_to_pdf(draft_text, title=topic)
+    # Resolve internal citation tags and append the alphabetized references.
+    pdf_bytes = render_markdown_to_pdf(
+        draft_text, title=topic, citation_registry=citation_registry
+    )
     
     return Response(
         content=pdf_bytes,
