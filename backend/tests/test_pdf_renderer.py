@@ -12,8 +12,10 @@ def test_pdf_renderer_handles_markdown_lists_and_citations():
         }
     ]
     pdf = render_markdown_to_pdf(
-        "## Summary\n\n- First item\n- Second item\n\nClaim [CR-001].",
-        title="Smoke test",
+        "## Summary\n\n- First item\n- Second item\n\n"
+        "Prior work—published in 2024—supports this claim [CR-001]. "
+        "‘Quoted text’… Greek: α.",
+        title="Unicode – smoke test",
         citation_registry=registry,
     )
 
