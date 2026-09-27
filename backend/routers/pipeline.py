@@ -255,7 +255,9 @@ async def approve_pipeline(session_id: str, req: ApprovalRequest):
         state_updates["outline"] = req.updated_outline
     if req.approval_comment:
         state_updates["approval_comment"] = req.approval_comment
-        
-    _pipeline_graph.update_state(config, state_updates, as_node="merge_ab")
+
+    # Resume from the interrupted node's direct predecessor. Starting from
+    # merge_ab re-runs context_build and hits the user_approval interrupt again.
+    _pipeline_graph.update_state(config, state_updates, as_node="context_build")
     
     return {"status": "resumed"}
