@@ -143,6 +143,18 @@ def _clean_inline_markdown_noise(text: str) -> str:
     return re.sub(r"^\s*[-*]\s+", "- ", text)
 
 
+# Figure generation is not implemented; remove unresolved model-generated tags
+# (and their common explanatory aside) before adding draft text to the PDF.
+_FIGURE_PLACEHOLDER = re.compile(
+    r"\[{1,2}FIGURE:[^\]]*\]{1,2}(?:\s*\(Placeholder[^)]*\))?",
+    re.IGNORECASE,
+)
+
+
+def _strip_figure_placeholders(text: str) -> str:
+    return _FIGURE_PLACEHOLDER.sub("", text)
+
+
 def render_markdown_to_pdf(
     markdown_text: str,
     title: str = "Research Document",
@@ -150,6 +162,7 @@ def render_markdown_to_pdf(
     double_spaced: bool = True,
 ) -> bytes:
     """Render markdown into an APA-styled PDF, resolving citations if provided."""
+    markdown_text = _strip_figure_placeholders(markdown_text)
     if citation_registry:
         markdown_text = resolve_and_append_references(markdown_text, citation_registry)
     # Draft text and registry metadata can contain Unicode punctuation that
