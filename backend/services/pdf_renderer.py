@@ -16,6 +16,33 @@ BODY_PT = 12
 MARGIN_MM = 25.4
 INDENT_MM = 12.7
 
+_PDF_CHAR_REPLACEMENTS = str.maketrans({
+    "\u2010": "-",  # hyphen
+    "\u2011": "-",  # non-breaking hyphen
+    "\u2012": "-",  # figure dash
+    "\u2013": "-",  # en dash
+    "\u2014": "--",  # em dash
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u2026": "...",
+    "\u00a0": " ",  # non-breaking space
+    "\u2009": " ",  # thin space
+    "\u2212": "-",  # mathematical minus
+    "\u00d7": "x",
+    "\u2264": "<=",
+    "\u2265": ">=",
+    "\u2192": "->",
+    "\u2190": "<-",
+})
+
+
+def _normalize_pdf_text(text: str) -> str:
+    """Replace unsupported Unicode with safe text for fpdf2's core Times font."""
+    text = text.translate(_PDF_CHAR_REPLACEMENTS)
+    return text.encode("latin-1", errors="replace").decode("latin-1")
+
 
 def _pt_to_mm_line_height(size_pt: float, spacing: float) -> float:
     """Convert point size and spacing multiplier to a millimeter line height."""
@@ -25,7 +52,7 @@ def _pt_to_mm_line_height(size_pt: float, spacing: float) -> float:
 class APAPDFRenderer(FPDF):
     def __init__(self, title: str, double_spaced: bool = True):
         super().__init__(format="Letter", unit="mm")
-        self.doc_title = title
+        self.doc_title = _normalize_pdf_text(title)
         self.spacing = 2.0 if double_spaced else 1.15
         self.line_h = _pt_to_mm_line_height(BODY_PT, self.spacing)
         self.set_margins(MARGIN_MM, MARGIN_MM, MARGIN_MM)
@@ -125,6 +152,9 @@ def render_markdown_to_pdf(
     """Render markdown into an APA-styled PDF, resolving citations if provided."""
     if citation_registry:
         markdown_text = resolve_and_append_references(markdown_text, citation_registry)
+    # Draft text and registry metadata can contain Unicode punctuation that
+    # the built-in Times core font cannot encode (for example, an en dash).
+    markdown_text = _normalize_pdf_text(markdown_text)
 
     pdf = APAPDFRenderer(title=title, double_spaced=double_spaced)
 
