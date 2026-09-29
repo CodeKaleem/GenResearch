@@ -43,7 +43,7 @@ async def context_build_node(state: dict) -> dict:
         claims = [
             {
                 "claim_id": f"claim-{index + 1}-{source_index + 1}",
-                "text": f"The {section_name} section is grounded in relevant evidence from the literature.",
+                "text": f"Cite {source.get('title', 'this source')} where its evidence supports a specific point in the {section_name} section.",
                 "cited_chunk_ids": [source.get("id", f"source-{index + 1}-{source_index + 1}")],
                 "section": section_name,
             }
