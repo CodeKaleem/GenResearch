@@ -12,8 +12,35 @@ import logging
 from services.llm_service import call_llm
 from services.rag_service import semantic_search_session
 from services.agents.prompts.draft import DRAFT_SYSTEM, build_draft_prompt
+from services.citation_formatting import flag_unverified_freeform_citations
 
 logger = logging.getLogger(__name__)
+
+
+def _format_section_context_block(section_context: dict) -> str:
+    assigned_sources = section_context.get("assigned_sources", [])
+    claims = section_context.get("claims", [])
+
+    sources_block = (
+        "\n".join(
+            f"- [{source.get('id', 'UNKNOWN')}] {source.get('title', 'Untitled')}"
+            for source in assigned_sources
+        )
+        if assigned_sources
+        else "None. No real source is available for this section. Write conservatively, "
+        "mark unsupported claims with [CITATION NEEDED], and do not invent sources or content."
+    )
+    claims_block = "\n".join(f"- {claim.get('text', '')}" for claim in claims) or "None."
+
+    return (
+        f"\n\nSECTION_CONTEXT:\n{section_context.get('narrative_prompt', '')}"
+        f"\n\nSECTION_GOAL:\n{section_context.get('section_goal', '')}"
+        "\n\nASSIGNED_SOURCES (cite only these by their exact registry ID; do not use freeform citations):"
+        f"\n{sources_block}"
+        f"\n\nCLAIMS TO WEAVE IN ONLY IF SUPPORTED BY THE ASSIGNED SOURCES:\n{claims_block}"
+        "\n\nWrite only this section's body. Do not output a heading, section number, or repeat its title; "
+        "the application inserts the heading."
+    )
 
 
 async def draft_node(state: dict) -> dict:
@@ -83,7 +110,7 @@ async def draft_node(state: dict) -> dict:
                 approval_comment=state.get("approval_comment", ""),
             )
 
-            prompt += f"\n\nSECTION_CONTEXT:\n{section_context.get('narrative_prompt', '')}\n\nSECTION_GOAL:\n{section_context.get('section_goal', '')}\n\nASSIGNED_SOURCES:\n{section_context.get('assigned_sources', [])}\n\nCLAIMS:\n{section_context.get('claims', [])}\n\nIf a figure is useful for this section, insert a placeholder exactly as: [[FIGURE:id]] and do not attempt to render it."
+            prompt += _format_section_context_block(section_context)
 
             generated = await call_llm(
                 prompt=prompt,
@@ -93,19 +120,7 @@ async def draft_node(state: dict) -> dict:
                 max_tokens=3000,
             )
 
-            generated = generated.strip()
-            figure_slot = next(
-                (
-                    slot
-                    for slot in state.get("figure_slots", [])
-                    if slot.get("section_name") == section_name
-                ),
-                None,
-            )
-            if figure_slot:
-                placeholder = f"[[FIGURE:{figure_slot['id']}]]"
-                if placeholder not in generated:
-                    generated = f"{generated}\n\n{placeholder}"
+            generated = flag_unverified_freeform_citations(generated.strip())
 
             section_payload = {
                 "section_name": section_name,
@@ -122,7 +137,7 @@ async def draft_node(state: dict) -> dict:
             "current_step": "draft",
             "status": "running",
             "steps_log": [
-                f"✓ Composed {len(sections)} section-level drafts with figure placeholders"
+                f"✓ Composed {len(sections)} section-level drafts"
             ],
         }
 
@@ -136,6 +151,7 @@ async def draft_node(state: dict) -> dict:
         prompt=prompt, agent_role="draft", system=DRAFT_SYSTEM,
         temperature=0.4, max_tokens=4096,
     )
+    draft = flag_unverified_freeform_citations(draft)
 
     return {
         "draft_text": draft,
