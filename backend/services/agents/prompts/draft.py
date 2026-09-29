@@ -13,7 +13,9 @@ publication-quality research paper drafts that are:
 4. **Academic**: Formal language, proper paragraph structure, logical flow.
 
 Citation rules:
-- Reference citations by their registry ID: [CR-001], [CR-002], etc.
+- Reference citations only by their exact registry ID: [CR-001], [CR-002], etc.
+- Never write freeform author/year citations such as "(Smith et al., 2020)". If no registry ID
+    supports a claim, mark it [CITATION NEEDED].
 - These will be resolved to full citations in post-processing.
 - Every paragraph that makes a factual claim should have at least one citation.
 - Prioritize user-provided sources (tagged "user") over scraped sources.
