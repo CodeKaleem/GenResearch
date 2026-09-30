@@ -18,8 +18,8 @@ export default function OverviewPage() {
         name: u.full_name,
         email: u.email,
         role: u.role,
-        papers: 0,
-        tasks: 0,
+        papers: u.papers?.[0]?.count ?? 0,
+        tasks: u.tasks?.[0]?.count ?? 0,
         status: u.status as any,
         joined: new Date(u.created_at).toLocaleDateString("en-US", { month: "short", year: "numeric" })
       })));

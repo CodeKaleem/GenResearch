@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { supabase } from "../../lib/supabase";
+import { updateLastSeen } from "../../lib/db";
 import { C, globalStyles } from "./shared";
 
 function FormField({ id, label, type = "text", placeholder, value, onChange, icon, error }: {
@@ -73,6 +74,7 @@ export default function AdminLogin({ onLoginSuccess }: {
         return;
       }
 
+      await updateLastSeen();
       onLoginSuccess?.();
     } catch { setError("An unexpected error occurred."); }
     finally { setLoading(false); }

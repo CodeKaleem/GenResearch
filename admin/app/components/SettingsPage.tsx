@@ -1,6 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { C, SectionHead, PageTitle, Modal, Field, inputStyle, selectStyle } from "./shared";
+import { subscribeToSettings, updateSetting } from "../../lib/db";
+import { supabase } from "../../lib/supabase";
 
 function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -33,6 +35,7 @@ function SettingCard({ title, children }: { title: string; children: React.React
 
 export default function SettingsPage() {
   const [toast, setToast] = useState("");
+  const [saving, setSaving] = useState(false);
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
 
   // General
@@ -72,12 +75,93 @@ export default function SettingsPage() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [newApiKey, setNewApiKey] = useState("");
 
+  useEffect(() => subscribeToSettings((settings) => {
+    const asString = (key: string, fallback: string) => {
+      const value = settings[key];
+      return value == null ? fallback : String(value);
+    };
+    const asBoolean = (key: string, fallback: boolean) => {
+      const value = settings[key];
+      if (typeof value === "boolean") return value;
+      if (typeof value === "string") return value.toLowerCase() === "true";
+      return fallback;
+    };
+
+    setPlatformName(asString("platform_name", "GenResearch"));
+    setAdminEmail(asString("admin_email", "admin@comsats.edu.pk"));
+    setTimezone(asString("timezone", "Asia/Karachi"));
+    setModel(asString("default_model", "gpt-3.5-turbo"));
+    setTemperature(asString("temperature", "0.7"));
+    setMaxTokens(asString("max_tokens", "2048"));
+    setStreamEnabled(asBoolean("stream_enabled", true));
+    setEmailAlerts(asBoolean("email_alerts", true));
+    setAgentFailAlert(asBoolean("agent_fail_alert", true));
+    setCostAlert(asBoolean("cost_alert", true));
+    setNewUserAlert(asBoolean("new_user_alert", false));
+    setDailyDigest(asBoolean("daily_digest", true));
+    setMfaRequired(asBoolean("mfa_required", false));
+    setSessionTimeout(asString("session_timeout", "60"));
+    setIpWhitelist(asBoolean("ip_whitelist", false));
+    setChunkSize(asString("chunk_size", "512"));
+    setChunkOverlap(asString("chunk_overlap", "64"));
+    setTopK(asString("top_k", "5"));
+    setEmbeddingModel(asString("embedding_model", "text-embedding-ada-002"));
+    setMaintenanceMode(asBoolean("maintenance_mode", false));
+    setAutoBackup(asBoolean("auto_backup", true));
+  }), []);
+
+  const saveSettings = async (values: Record<string, unknown>, successMessage: string) => {
+    setSaving(true);
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        showToast("Sign in as an administrator to save settings.");
+        return;
+      }
+      const results = await Promise.all(
+        Object.entries(values).map(([key, value]) => updateSetting(key, value, user.id)),
+      );
+      const failed = results.find(result => result.error);
+      showToast(failed?.error ? `Save failed: ${failed.error.message}` : successMessage);
+    } catch (error) {
+      showToast(`Save failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const generalSettings = () => ({ platform_name: platformName, admin_email: adminEmail, timezone });
+  const ragSettings = () => ({
+    embedding_model: embeddingModel,
+    chunk_size: Number(chunkSize) || 512,
+    chunk_overlap: Number(chunkOverlap) || 0,
+    top_k: Number(topK) || 5,
+  });
+  const allSettings = () => ({
+    ...generalSettings(),
+    ...ragSettings(),
+    default_model: model,
+    temperature: Number(temperature) || 0,
+    max_tokens: Number(maxTokens) || 2048,
+    stream_enabled: streamEnabled,
+    email_alerts: emailAlerts,
+    agent_fail_alert: agentFailAlert,
+    cost_alert: costAlert,
+    new_user_alert: newUserAlert,
+    daily_digest: dailyDigest,
+    mfa_required: mfaRequired,
+    session_timeout: Number(sessionTimeout) || 60,
+    ip_whitelist: ipWhitelist,
+    maintenance_mode: maintenanceMode,
+    auto_backup: autoBackup,
+  });
+
   return (
     <div style={{ animation: "fadeUp .5s both" }}>
       <PageTitle
         title="Settings"
         sub="Configuration"
-        actions={<button className="btn-gold" onClick={() => showToast("All settings saved successfully")}>Save All Changes</button>}
+        actions={<button className="btn-gold" disabled={saving} onClick={() => saveSettings(allSettings(), "All settings saved successfully")}>{saving ? "Saving…" : "Save All Changes"}</button>}
       />
 
       {toast && (
@@ -105,7 +189,7 @@ export default function SettingsPage() {
                 <option value="Europe/London">Europe/London (GMT)</option>
               </select>
             </Field>
-            <button className="btn-ink" style={{ marginTop: 8 }} onClick={() => showToast("General settings saved")}>Save General</button>
+            <button className="btn-ink" style={{ marginTop: 8 }} disabled={saving} onClick={() => saveSettings(generalSettings(), "General settings saved")}>Save General</button>
           </SettingCard>
 
           {/* RAG */}
@@ -128,7 +212,7 @@ export default function SettingsPage() {
                 <input style={inputStyle} type="number" value={topK} onChange={e => setTopK(e.target.value)} />
               </Field>
             </div>
-            <button className="btn-ink" style={{ marginTop: 8 }} onClick={() => showToast("RAG configuration updated")}>Apply RAG Settings</button>
+            <button className="btn-ink" style={{ marginTop: 8 }} disabled={saving} onClick={() => saveSettings(ragSettings(), "RAG configuration saved")}>Apply RAG Settings</button>
           </SettingCard>
         </div>
 
