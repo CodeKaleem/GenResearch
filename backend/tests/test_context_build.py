@@ -4,7 +4,10 @@ from models.schemas import GeneratedSection
 from services.agents.pipeline_graph import build_pipeline_graph
 from services.agents.nodes.context_build import context_build_node
 from services.agents.nodes import draft as draft_module
+from services.agents.nodes.draft import _format_section_context_block
 from services.agents.state import FigureSlot, ProposalState, SectionContext
+from services.citation_formatting import flag_unverified_freeform_citations
+from services.pdf_renderer import APAPDFRenderer, render_markdown_to_pdf
 
 
 def test_section_context_contract_exists():
@@ -58,12 +61,28 @@ def test_context_claims_match_generated_section_schema():
     assert generated.claims[0].section == "Introduction"
 
 
-def test_draft_node_emits_one_registered_figure_placeholder(monkeypatch):
+def test_context_build_keeps_sources_and_claims_empty_without_registry_entries():
+    result = asyncio.run(
+        context_build_node(
+            {
+                "outline": {"sections": [{"name": "Methodology"}]},
+                "citation_registry": [],
+            }
+        )
+    )
+
+    context = result["section_contexts"][0]
+    assert context["assigned_sources"] == []
+    assert context["claims"] == []
+    assert result["figure_slots"][0]["source_id"] is None
+
+
+def test_draft_node_does_not_inject_figures_and_flags_freeform_citations(monkeypatch):
     async def fake_search(**kwargs):
         return []
 
     async def fake_llm(**kwargs):
-        return "Section evidence."
+        return "Section evidence (Davies et al., 2020)."
 
     monkeypatch.setattr(draft_module, "semantic_search_session", fake_search)
     monkeypatch.setattr(draft_module, "call_llm", fake_llm)
@@ -90,5 +109,53 @@ def test_draft_node_emits_one_registered_figure_placeholder(monkeypatch):
         )
     )
 
-    assert result["draft_text"].count("[[FIGURE:figure-1]]") == 1
+    assert "Davies" not in result["draft_text"]
+    assert "[CITATION NEEDED]" in result["draft_text"]
+    assert "[[FIGURE:" not in result["draft_text"]
     GeneratedSection.model_validate(result["generated_sections"][0])
+
+
+def test_section_context_block_formats_real_sources_and_empty_sources():
+    block = _format_section_context_block(
+        {
+            "assigned_sources": [{"id": "CR-001", "title": "Real paper"}],
+            "claims": [{"text": "A supported point."}],
+            "narrative_prompt": "Write carefully.",
+            "section_goal": "Explain the method.",
+        }
+    )
+    empty_block = _format_section_context_block(
+        {"assigned_sources": [], "claims": []}
+    )
+
+    assert "[CR-001] Real paper" in block
+    assert "{'id':" not in block
+    assert "No real source is available" in empty_block
+    assert "[[FIGURE:id]]" not in block + empty_block
+
+
+def test_freeform_citations_are_flagged_and_registry_tags_are_preserved():
+    cleaned = flag_unverified_freeform_citations(
+        "Unverified (Davies et al., 2020), but verified [CR-001]."
+    )
+
+    assert "Davies" not in cleaned
+    assert "[CITATION NEEDED]" in cleaned
+    assert "[CR-001]" in cleaned
+
+
+def test_pdf_renderer_treats_h4_as_a_heading(monkeypatch):
+    rendered_headings = []
+    original_write_heading = APAPDFRenderer.write_heading
+
+    def record_heading(self, text, level):
+        rendered_headings.append((text, level))
+        return original_write_heading(self, text, level)
+
+    monkeypatch.setattr(APAPDFRenderer, "write_heading", record_heading)
+    pdf_bytes = render_markdown_to_pdf(
+        "## Methodology\n\n#### Data Collection\n\nSome text.", title="test"
+    )
+
+    assert pdf_bytes.startswith(b"%PDF-")
+    assert ("Data Collection", 3) in rendered_headings
