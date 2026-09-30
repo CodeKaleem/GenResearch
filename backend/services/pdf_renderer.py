@@ -176,8 +176,9 @@ def render_markdown_to_pdf(
         if not block:
             continue
 
-        if block.startswith("### "):
-            pdf.write_heading(block[4:].strip(), level=3)
+        heading_match = re.match(r"^(#{1,6})\s+(.*)", block)
+        if heading_match and len(heading_match.group(1)) >= 3:
+            pdf.write_heading(heading_match.group(2).strip(), level=3)
         elif block.startswith("## "):
             heading_text = block[3:].strip()
             pdf.write_heading(
