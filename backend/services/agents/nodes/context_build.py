@@ -40,15 +40,6 @@ async def context_build_node(state: dict) -> dict:
         guidance = section.get("guidance") or section.get("goal") or f"Develop the {section_name} section with section-specific evidence and reasoning."
         assigned_sources = list(registry[: min(3, len(registry))])
 
-        if len(assigned_sources) == 0:
-            assigned_sources = [
-                {
-                    "id": f"source-{index + 1}",
-                    "title": f"Background source for {section_name}",
-                    "abstract_snippet": "Fallback source context for the section draft.",
-                }
-            ]
-
         claims = [
             {
                 "claim_id": f"claim-{index + 1}-{source_index + 1}",
@@ -67,7 +58,7 @@ async def context_build_node(state: dict) -> dict:
                 "kind": "figure",
                 "caption": f"{section_name} figure placeholder",
                 "reason": "Placeholder reserved for future figure generation; no rendering yet.",
-                "source_id": assigned_sources[0].get("id"),
+                "source_id": assigned_sources[0].get("id") if assigned_sources else None,
             }
             figure_slots.append(figure_slot)
 
