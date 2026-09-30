@@ -4,6 +4,10 @@
 // ============================================================
 import { supabase } from "./supabase";
 
+export async function updateLastSeen() {
+  return supabase.rpc("update_last_seen");
+}
+
 // ── Re-export shared types ──────────────────────────────────
 export interface Profile {
   id: string;
@@ -15,6 +19,8 @@ export interface Profile {
   avatar_url: string | null;
   created_at: string;
   last_seen_at: string;
+  papers?: { count: number }[];
+  tasks?: { count: number }[];
 }
 
 export interface Paper {
@@ -98,7 +104,7 @@ export interface PlatformStats {
 export async function getAllProfiles() {
   const { data, error } = await supabase
     .from("profiles")
-    .select("*")
+    .select("*, papers(count), tasks(count)")
     .order("created_at", { ascending: false });
   return { data: (data ?? []) as Profile[], error };
 }
@@ -197,7 +203,7 @@ export async function getAllSettings() {
 export async function updateSetting(key: string, value: unknown, updatedBy: string) {
   return supabase
     .from("platform_settings")
-    .upsert({ key, value: JSON.stringify(value), updated_by: updatedBy, updated_at: new Date().toISOString() })
+    .upsert({ key, value, updated_by: updatedBy, updated_at: new Date().toISOString() }, { onConflict: "key" })
     .select()
     .single();
 }

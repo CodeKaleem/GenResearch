@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { C, Badge, SectionHead, PageTitle } from "./shared";
-import { subscribeToAgentLogs, type AgentLog } from "../../lib/db";
+import { subscribeToAgentLogs, clearAgentLogs, type AgentLog } from "../../lib/db";
 
 type LogLevel = "info" | "warn" | "error" | "success";
 
@@ -70,6 +70,13 @@ export default function LogsPage() {
     success: logs.filter(l => l.level === "success").length 
   };
 
+  const handleClearLogs = async () => {
+    const { error } = await clearAgentLogs();
+    if (error) return;
+    setDbLogs([]);
+    setShowClearConfirm(false);
+  };
+
   return (
     <div style={{ animation: "fadeUp .5s both" }}>
       <PageTitle
@@ -124,7 +131,7 @@ export default function LogsPage() {
               ? <button className="btn-ghost" style={{ padding: "4px 12px", fontSize: 11 }} onClick={() => setShowClearConfirm(true)}>Clear</button>
               : <span style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 12, color: C.red, display: "flex", alignItems: "center", gap: 6 }}>
                   Confirm clear?
-                  <button className="btn-red" style={{ padding: "3px 10px" }} onClick={() => { setDbLogs([]); setShowClearConfirm(false); }}>Yes</button>
+                  <button className="btn-red" style={{ padding: "3px 10px" }} onClick={handleClearLogs}>Yes</button>
                   <button className="btn-ghost" style={{ padding: "3px 10px" }} onClick={() => setShowClearConfirm(false)}>No</button>
                 </span>
             }
