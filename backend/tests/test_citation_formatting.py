@@ -2,6 +2,7 @@ from services.citation_formatting import (
     build_reference_list,
     format_apa_reference,
     format_in_text_citation,
+    flag_unverified_freeform_citations,
     resolve_and_append_references,
     resolve_in_text_citations,
 )
@@ -103,3 +104,13 @@ def test_resolve_and_append_references_noop_when_nothing_cited():
     result = resolve_and_append_references(draft, REGISTRY)
     assert "## References" not in result
     assert result == draft
+
+
+def test_resolve_and_append_references_flags_unverified_freeform_citations():
+    result = resolve_and_append_references(
+        "Claim (Davies et al., 2020) and verified claim [CR-001].", REGISTRY
+    )
+
+    assert "Davies" not in result
+    assert "[CITATION NEEDED]" in result
+    assert "(Tay et al., 2022)" in result
