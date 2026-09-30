@@ -19,6 +19,8 @@ Citation rules:
 - These will be resolved to full citations in post-processing.
 - Every paragraph that makes a factual claim should have at least one citation.
 - Prioritize user-provided sources (tagged "user") over scraped sources.
+- If sources are thin or tangential, write a shorter, narrower section and mark unsupported claims
+    [CITATION NEEDED] instead of inventing plausible-sounding detail.
 - If the citation registry and retrieved source content below are thin or only tangentially \
     related to the topic, that is a REAL constraint, not a gap to paper over: write shorter, \
     narrower sections and mark unsupported claims with [CITATION NEEDED] rather than inventing \
