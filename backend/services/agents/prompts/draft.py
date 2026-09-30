@@ -30,6 +30,8 @@ Output-structure rules (violating these corrupts the assembled document — foll
 - Do NOT repeat the section title as the first line of your output, in plain text OR bold \
     markdown. The heading is inserted automatically by the assembly step; starting your response \
     with the section name (or a bolded restatement of it) produces a duplicated heading.
+- Do NOT output a heading or numbered scaffold such as "Section 1: Introduction"; the application
+    inserts the section heading automatically.
 - Do NOT write your own "References," "Bibliography," or "Works Cited" list anywhere in your \
     output, in any section, including the last one. The complete reference list is generated \
     automatically from the citation registry after every section is assembled. Any reference list \
