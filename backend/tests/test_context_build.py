@@ -42,10 +42,17 @@ def test_pipeline_graph_contains_context_build_node():
 
 
 def test_context_claims_match_generated_section_schema():
+    # The registry entry's title must share real vocabulary with the section
+    # (here: "example") since context_build_node now assigns sources by
+    # relevance rather than handing every section the same top-N slice.
     result = asyncio.run(
         context_build_node(
             {
-                "outline": {"sections": [{"name": "Introduction"}]},
+                "outline": {
+                    "sections": [
+                        {"name": "Introduction", "guidance": "Introduce the example paper's topic."}
+                    ]
+                },
                 "citation_registry": [{"id": "CR-001", "title": "Example paper"}],
             }
         )

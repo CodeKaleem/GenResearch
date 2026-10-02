@@ -2,6 +2,7 @@
 # GenResearch — Agent Tasks Router
 # API endpoints for all 4 research agents
 # ============================================================
+import json
 import uuid
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -11,8 +12,37 @@ from services.agents.summarization_agent import run_summarization
 from services.agents.literature_review_agent import run_literature_review
 from services.agents.citation_agent import run_citation_extraction
 from services.agents.proposal_graph import run_proposal_draft_stream
+from services import request_context, tracking
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+async def _run_tracked_agent(user_id: str, title: str, agent_type: str, paper_ids: list[str], run):
+    """Run an agent while persisting best-effort task, result, and log records."""
+    task_id = tracking.create_task(user_id, title, agent_type, len(paper_ids))
+    user_token = request_context.set_user_id(user_id)
+    try:
+        result = await run()
+        tracking.complete_task(task_id, "completed")
+        tracking.save_task_result(
+            task_id=task_id,
+            user_id=user_id,
+            type_=agent_type,
+            title=title,
+            content=json.dumps(result, ensure_ascii=False, default=str),
+        )
+        tracking.log_agent_event(
+            "success", f"Completed {title} for {len(paper_ids)} paper(s).", agent=agent_type, user_id=user_id
+        )
+        return result
+    except Exception as error:
+        tracking.complete_task(task_id, "failed")
+        tracking.log_agent_event(
+            "error", f"{title} failed: {str(error)[:1800]}", agent=agent_type, user_id=user_id
+        )
+        raise
+    finally:
+        request_context.reset_user_id(user_token)
 
 
 # ── Request Models ────────────────────────────────────────────
@@ -54,9 +84,12 @@ async def summarize_papers(req: AgentRequest):
         raise HTTPException(status_code=400, detail="user_id is required.")
 
     try:
-        result = await run_summarization(
+        result = await _run_tracked_agent(
             user_id=req.user_id,
+            title="Paper summarization",
+            agent_type="summarization",
             paper_ids=req.paper_ids,
+            run=lambda: run_summarization(user_id=req.user_id, paper_ids=req.paper_ids),
         )
         return result
     except Exception as e:
@@ -77,10 +110,16 @@ async def literature_review(req: LitReviewRequest):
         raise HTTPException(status_code=400, detail="user_id is required.")
 
     try:
-        result = await run_literature_review(
+        result = await _run_tracked_agent(
             user_id=req.user_id,
+            title=req.focus_topic or "Literature review",
+            agent_type="literature_review",
             paper_ids=req.paper_ids,
-            focus_topic=req.focus_topic,
+            run=lambda: run_literature_review(
+                user_id=req.user_id,
+                paper_ids=req.paper_ids,
+                focus_topic=req.focus_topic,
+            ),
         )
         return result
     except Exception as e:
@@ -101,10 +140,16 @@ async def extract_citations(req: CitationRequest):
         raise HTTPException(status_code=400, detail="Style must be: apa, mla, ieee, or chicago.")
 
     try:
-        result = await run_citation_extraction(
+        result = await _run_tracked_agent(
             user_id=req.user_id,
+            title=f"Citation extraction ({req.style.upper()})",
+            agent_type="citation",
             paper_ids=req.paper_ids,
-            style=req.style,
+            run=lambda: run_citation_extraction(
+                user_id=req.user_id,
+                paper_ids=req.paper_ids,
+                style=req.style,
+            ),
         )
         return result
     except Exception as e:
@@ -149,14 +194,54 @@ async def draft_proposal_stream(req: ProposalRequest):
     if not req.topic.strip():
         raise HTTPException(status_code=400, detail="Research topic is required.")
 
-    return StreamingResponse(
-        run_proposal_draft_stream(
-            user_id=req.user_id,
-            paper_ids=req.paper_ids,
-            topic=req.topic,
-        ),
-        media_type="application/x-ndjson"
-    )
+    async def tracked_proposal_stream():
+        task_id = tracking.create_task(
+            req.user_id, req.topic, "proposal", paper_count=len(req.paper_ids)
+        )
+        user_token = request_context.set_user_id(req.user_id)
+        session_token = request_context.set_session_id(str(uuid.uuid4()))
+        final_result = None
+        try:
+            async for line in run_proposal_draft_stream(
+                user_id=req.user_id,
+                paper_ids=req.paper_ids,
+                topic=req.topic,
+            ):
+                try:
+                    event = json.loads(line)
+                    if event.get("type") == "done":
+                        final_result = event.get("final_result")
+                except (TypeError, json.JSONDecodeError):
+                    pass
+                yield line
+
+            tracking.complete_task(task_id, "completed")
+            if final_result:
+                tracking.save_task_result(
+                    task_id=task_id,
+                    user_id=req.user_id,
+                    type_="proposal",
+                    title=req.topic,
+                    content=json.dumps(final_result, ensure_ascii=False, default=str),
+                )
+            tracking.log_agent_event(
+                "success",
+                f"Completed proposal drafting for {len(req.paper_ids)} paper(s).",
+                agent="proposal",
+                user_id=req.user_id,
+            )
+        except Exception as error:
+            tracking.complete_task(task_id, "failed")
+            tracking.log_agent_event(
+                "error", f"Proposal drafting failed: {str(error)[:1800]}",
+                agent="proposal", user_id=req.user_id,
+            )
+            raise
+        finally:
+            request_context.reset_session_id(session_token)
+            request_context.reset_user_id(user_token)
+
+    return StreamingResponse(tracked_proposal_stream(), media_type="application/x-ndjson")
 
 
 # ── POST /agents/cancel ──────────────────────────────────────

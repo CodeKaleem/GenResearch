@@ -25,6 +25,18 @@ Citation rules:
     related to the topic, that is a REAL constraint, not a gap to paper over: write shorter, \
     narrower sections and mark unsupported claims with [CITATION NEEDED] rather than inventing \
     plausible-sounding detail to fill the space.
+- Marking a claim [CITATION NEEDED] does not license inventing it. Never name a SPECIFIC \
+    real-world entity you are not certain is real and relevant — a drug name, a \
+    named study, a company, a specific statistic or percentage, a specific date or trial outcome \
+    — unless it appears in the ASSIGNED_SOURCES or RAG context given to you. A fabricated specific \
+    detail (e.g. naming a real drug and inventing what it was developed for) is worse than a vague \
+    claim, because it reads as credible and is harder to spot as false. When you don't have a \
+    real specific example, write in general terms instead ("some AI-assisted drug discovery \
+    efforts have faced setbacks due to predictive model limitations [CITATION NEEDED]") rather \
+    than inventing a named one. This applies with extra force to any "Case Study" or "Example" \
+    section — do not invent a specific named case to fill the section; synthesize only from \
+    real material above, or state plainly that no specific case is available from the sources \
+    provided.
 
 Output-structure rules (violating these corrupts the assembled document — follow exactly):
 - Do NOT repeat the section title as the first line of your output, in plain text OR bold \
@@ -51,28 +63,31 @@ Quality targets:
 """
 
 # Few-shot exemplars embedded in prompts per spec §7.4 (prompt engineering, not fine-tuning).
-# These are schematic templates with placeholders only; concrete fake examples can be copied
-# into drafts as unsupported content when the real retrieval context is thin.
+#
+# These are described in prose, deliberately with NO bracket-shaped syntax at all (no
+# "[CR-00X]", no "[Author A, Year]") — two earlier versions of this guidance used fill-in-the-
+# blank templates with bracketed placeholders, and in both cases the draft agent copied the
+# placeholder syntax ITSELF into real output rather than filling it in. A plain-prose
+# description of the structure gives the model nothing bracket-shaped to copy.
 FEW_SHOT_EXEMPLARS = """
-=== EXEMPLAR 1: Introduction structure (a template, not real content) ===
-[Broad framing of the field] has [transformed / reshaped / advanced] [domain], enabling \
-[capability] [CR-00X]. However, [a real limitation or tension in the actual sources] presents \
-[challenge] [CR-00Y]. This tension has motivated [type of research direction found in the \
-actual sources] [CR-00Z]. This paper addresses [specific gap, grounded in the real material \
-above] by [approach].
+=== EXEMPLAR 1: How to open an introduction ===
+Name the broad area your ACTUAL assigned sources cover, citing it with its real registry ID
+exactly as listed in ASSIGNED_SOURCES below — not an invented topic. State a real limitation or
+tension those actual sources raise, with its own real citation ID. Note what research
+direction, if any, your actual sources point toward. Close with the specific gap this paper
+addresses, grounded only in the material actually given to you. If your real sources don't
+support one of these steps, skip that step or mark the sentence with the citation-needed flag
+exactly as instructed above — do not invent a topic, source, or finding to complete the pattern.
 
-=== EXEMPLAR 2: Literature-synthesis structure (a template, not real content) ===
-While [Author A, Year] [CR-00X] demonstrated [a real finding from the actual sources], their \
-approach was limited to [a real constraint]. In contrast, [Author B, Year] [CR-00Y] extended \
-this to [a broader case, if the real sources support one] but reported [a real limitation]. \
-[If a third real source exists: More recently, Author C, Year [CR-00Z] proposed [approach], \
-achieving [outcome].] However, [a real remaining gap in the actual sources] motivates \
-[this paper's specific focus].
-
-Remember: every bracketed placeholder above must be filled from the REAL citation registry \
-and RAG context provided below — never from a remembered example, a plausible-sounding study, \
-or a fabricated author name. If the real sources don't support filling a placeholder, omit that \
-sentence or mark the claim [CITATION NEEDED] instead.
+=== EXEMPLAR 2: How to synthesize sources in a literature review ===
+Pick two or three sources that are ACTUALLY in the citation registry below. State what the
+first one found, citing its real registry ID. Contrast it with what a second real source found,
+citing ITS real registry ID — note where they agree, disagree, or one extends the other. Add a
+third real source the same way only if one actually exists below. Close with the real gap
+between what these sources show and what this paper still needs to address. If you only have
+one real source, or none, do not invent a second or third to manufacture a contrast — write a
+shorter synthesis using only what's actually there, and flag anything beyond it as needing a
+citation exactly as instructed above.
 """
 
 
@@ -147,10 +162,14 @@ Now compose the complete research paper draft. Follow the outline structure exac
 Cite sources using their registry IDs (e.g., [CR-001]). Mark any unsupported claims with [CITATION NEEDED].
 
 Final reminders before you write:
-- Do not start any section with its own title repeated as text.
+- Do not start any section with its own title repeated as text, in any form — not bare, not as
+  "Section N: Title", not bolded. The heading is inserted automatically.
 - Do not write a References/Bibliography list yourself, anywhere.
 - Do not insert [FIGURE:...] placeholders.
-- The style exemplars above are templates with bracket placeholders — copying their wording, \
-authors, or subject matter (rather than filling placeholders from the real registry and RAG \
-context) produces a fabricated paper. If the real sources above are thin, write less; do not \
-borrow content from the exemplars to compensate."""
+- Do not name a specific real-world drug, study, company, statistic, or date unless it appears
+  in the ASSIGNED_SOURCES or RAG context above — this applies even in a Case Study section, and
+  even if you plan to mark the sentence [CITATION NEEDED].
+- The style exemplars above describe structure in prose — they contain no citation IDs, author
+  names, or findings to copy. If you find yourself writing something that resembles example
+  text rather than content drawn from the real registry and RAG context above, stop and rewrite
+  it from the real material instead. If the real sources above are thin, write less."""

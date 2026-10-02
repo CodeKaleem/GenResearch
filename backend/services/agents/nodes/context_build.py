@@ -1,8 +1,54 @@
 from __future__ import annotations
 
 import logging
+import re
 
 logger = logging.getLogger(__name__)
+
+_STOPWORDS = {
+    "the", "a", "an", "of", "in", "on", "for", "and", "or", "to", "with", "is", "are",
+    "this", "that", "by", "from", "as", "at", "be", "can", "will", "their", "its", "into",
+    "about", "using", "based", "study", "paper", "research", "review",
+}
+
+
+def _tokenize(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-zA-Z]{3,}", text.lower()) if w not in _STOPWORDS}
+
+
+def _select_relevant_sources(section_name: str, guidance: str, registry: list[dict], limit: int = 3) -> list[dict]:
+    """
+    Pick the registry entries most relevant to THIS section, instead of
+    handing every section the same top-N slice of the registry regardless
+    of topic. The previous `registry[:3]` approach meant a Methodology
+    section could be "assigned" sources that were actually about diagnostic
+    imaging, with no way for the draft agent to tell they didn't fit.
+
+    Uses simple keyword overlap rather than a new embedding call — cheap,
+    deterministic, and good enough to stop handing clearly-irrelevant
+    sources to a section. If nothing overlaps, returns an honest empty list
+    rather than falling back to an arbitrary slice — the draft prompt
+    already handles "no sources for this section" correctly.
+    """
+    if not registry:
+        return []
+
+    section_tokens = _tokenize(f"{section_name} {guidance}")
+    if not section_tokens:
+        return list(registry[:limit])
+
+    scored = []
+    for source in registry:
+        source_text = f"{source.get('title', '')} {source.get('abstract_snippet', '')}"
+        overlap = len(section_tokens & _tokenize(source_text))
+        if overlap > 0:
+            scored.append((overlap, source))
+
+    if not scored:
+        return []
+
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [source for _, source in scored[:limit]]
 
 
 async def context_build_node(state: dict) -> dict:
@@ -38,7 +84,7 @@ async def context_build_node(state: dict) -> dict:
     for index, section in enumerate(sections):
         section_name = section.get("name", f"Section {index + 1}")
         guidance = section.get("guidance") or section.get("goal") or f"Develop the {section_name} section with section-specific evidence and reasoning."
-        assigned_sources = list(registry[: min(3, len(registry))])
+        assigned_sources = _select_relevant_sources(section_name, guidance, registry)
 
         claims = [
             {

@@ -24,9 +24,15 @@ def test_exemplars_do_not_contain_old_fabricated_content():
         assert fingerprint not in FEW_SHOT_EXEMPLARS
 
 
-def test_exemplars_are_schematic_templates():
-    assert "[Author" in FEW_SHOT_EXEMPLARS
-    assert "[a real finding" in FEW_SHOT_EXEMPLARS
+def test_exemplars_contain_no_bracket_syntax_to_copy():
+    # Two earlier exemplar designs used bracketed fill-in placeholders
+    # ("[CR-00X]", "[Author A, Year]") and in both cases the draft agent
+    # copied the placeholder syntax itself into real output instead of
+    # filling it in. The exemplars now describe structure in prose only —
+    # zero bracket characters anywhere, nothing bracket-shaped to copy.
+    assert "[" not in FEW_SHOT_EXEMPLARS
+    assert "]" not in FEW_SHOT_EXEMPLARS
+    assert "actual" in FEW_SHOT_EXEMPLARS.lower() or "real" in FEW_SHOT_EXEMPLARS.lower()
 
 
 def test_prompt_forbids_self_written_references_duplicate_headings_and_figures():
