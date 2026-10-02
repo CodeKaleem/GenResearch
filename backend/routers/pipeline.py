@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from services.agents.pipeline_graph import build_pipeline_graph
 from database.supabase_client import get_supabase
 from database.chroma_client import get_user_collection
-from services import request_context
+from services import request_context, tracking
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,9 @@ async def start_pipeline(req: StartPipelineRequest):
     
     # A1 Fix: Populate user_provided_sources instead of dropping paper_ids
     user_sources = _fetch_user_sources(req.user_id, req.paper_ids)
+    task_id = tracking.create_task(
+        req.user_id, req.topic, "proposal", paper_count=len(user_sources)
+    )
     
     initial_state = {
         "topic": req.topic,
@@ -114,7 +117,8 @@ async def start_pipeline(req: StartPipelineRequest):
     
     _sessions[session_id] = {
         "state": initial_state,
-        "config": thread_config
+        "config": thread_config,
+        "task_id": task_id,
     }
     
     return {"session_id": session_id, "status": "initialized"}
@@ -134,6 +138,7 @@ async def stream_pipeline(session_id: str):
     
     async def sse_generator() -> AsyncGenerator[str, None]:
         session_token = request_context.set_session_id(session_id)
+        user_token = request_context.set_user_id(session_data["state"].get("user_id"))
         try:
             # We use astream to yield updates
             async for output in _pipeline_graph.astream(
@@ -178,18 +183,40 @@ async def stream_pipeline(session_id: str):
                     "sources": final_state.values.get("citation_registry", [])
                 }) + "\n"
             elif not next_nodes:
+                 final_values = final_state.values
+                 qa_score = final_values.get("final_qa_result", {}).get("overall_score")
+                 tracking.complete_task(session_data.get("task_id"), "completed", qa_score)
+                 if final_values.get("draft_text"):
+                     tracking.save_task_result(
+                         task_id=session_data.get("task_id"),
+                         user_id=session_data["state"].get("user_id", ""),
+                         type_="proposal",
+                         title=session_data["state"].get("topic", "Research proposal"),
+                         content=final_values["draft_text"],
+                         score=qa_score,
+                     )
+                 tracking.log_agent_event(
+                     "success", "Proposal pipeline completed.",
+                     agent="proposal", user_id=session_data["state"].get("user_id")
+                 )
                  yield json.dumps({
                     "type": "done",
                     "final_state": {
-                        "draft_file_path": final_state.values.get("draft_file_path"),
-                        "completion_guide_file_path": final_state.values.get("completion_guide_file_path"),
+                        "draft_file_path": final_values.get("draft_file_path"),
+                        "completion_guide_file_path": final_values.get("completion_guide_file_path"),
                     }
                 }) + "\n"
                 
         except Exception as e:
             logger.error(f"Pipeline error: {e}", exc_info=True)
+            tracking.complete_task(session_data.get("task_id"), "failed")
+            tracking.log_agent_event(
+                "error", f"Proposal pipeline failed: {str(e)[:1800]}",
+                agent="proposal", user_id=session_data["state"].get("user_id")
+            )
             yield json.dumps({"type": "error", "message": str(e)}) + "\n"
         finally:
+            request_context.reset_user_id(user_token)
             request_context.reset_session_id(session_token)
 
     return StreamingResponse(sse_generator(), media_type="application/x-ndjson")

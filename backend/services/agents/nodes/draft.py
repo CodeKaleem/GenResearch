@@ -8,13 +8,42 @@
 # ============================================================
 from __future__ import annotations
 import logging
+import re
 
 from services.llm_service import call_llm
 from services.rag_service import semantic_search_session
 from services.agents.prompts.draft import DRAFT_SYSTEM, build_draft_prompt
 from services.citation_formatting import flag_unverified_freeform_citations
+from services.agents.nodes.context_build import _select_relevant_sources
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_duplicate_leading_heading(generated: str, section_name: str) -> str:
+    """
+    Deterministic backstop: across real runs, the draft agent has repeated
+    the section title as the first line of its own body text in three
+    different forms — bare ("Introduction"), as a markdown heading
+    ("### Section 1: Introduction"), and bolded ("**Section 1:
+    Introduction**") — despite an explicit prompt instruction against each
+    form. Prompt wording alone hasn't reliably prevented this, so this
+    strips whichever form shows up after the fact instead.
+    """
+    stripped = generated.lstrip()
+    newline_idx = stripped.find("\n")
+    first_line = stripped if newline_idx == -1 else stripped[:newline_idx]
+    rest = "" if newline_idx == -1 else stripped[newline_idx + 1:]
+
+    normalized = first_line.strip()
+    normalized = re.sub(r"^#{1,6}\s*", "", normalized)
+    normalized = re.sub(r"^\*+\s*", "", normalized)
+    normalized = re.sub(r"\s*\*+\s*$", "", normalized)
+    normalized = re.sub(r"^section\s*\d*\s*:\s*", "", normalized, flags=re.IGNORECASE)
+    normalized = normalized.rstrip(":").strip()
+
+    if normalized.lower() == section_name.strip().lower():
+        return rest.lstrip("\n").lstrip()
+    return generated
 
 
 def _format_section_context_block(section_context: dict) -> str:
@@ -94,7 +123,9 @@ async def draft_node(state: dict) -> dict:
                 {
                     "section_name": section_name,
                     "section_goal": section.get("guidance", "Write the section with clear academic reasoning."),
-                    "assigned_sources": registry[:3],
+                    "assigned_sources": _select_relevant_sources(
+                        section_name, section.get("guidance", ""), registry
+                    ),
                     "claims": [],
                     "figure_slots": [],
                     "narrative_prompt": f"Write the {section_name} section grounded in the research evidence.",
@@ -121,6 +152,7 @@ async def draft_node(state: dict) -> dict:
             )
 
             generated = flag_unverified_freeform_citations(generated.strip())
+            generated = _strip_duplicate_leading_heading(generated, section_name)
 
             section_payload = {
                 "section_name": section_name,

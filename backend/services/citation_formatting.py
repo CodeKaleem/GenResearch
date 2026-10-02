@@ -21,6 +21,24 @@ def flag_unverified_freeform_citations(text: str) -> str:
     """Replace author/year citations that cannot be checked against the registry."""
     return _FREEFORM_CITATION.sub("[CITATION NEEDED]", text)
 
+
+# Catches placeholder-template syntax the draft agent copies literally
+# instead of filling in — e.g. "[Author A, Year] [CR-00X]" lifted straight
+# from a prompt exemplar. Two patterns:
+#   - "[Author <Letter>, Year]"-shaped brackets (never a real citation)
+#   - "[CR-...]"-shaped brackets that aren't a real 3-digit ID (a near-miss
+#     like [CR-00X] reads as a real tag to someone skimming, but CITATION_TAG
+#     requires exactly 3 digits and silently ignores anything else)
+_PLACEHOLDER_AUTHOR_BRACKET = re.compile(r"\[\s*Author\s+[A-Za-z]\s*,?\s*Year\s*\]", re.IGNORECASE)
+_NEAR_MISS_CR_TAG = re.compile(r"\[CR-(?!\d{3})[^\]]*\]")
+
+
+def flag_placeholder_template_syntax(text: str) -> str:
+    """Replace copied-literally exemplar placeholder syntax with an honest flag."""
+    text = _PLACEHOLDER_AUTHOR_BRACKET.sub("[CITATION NEEDED]", text)
+    text = _NEAR_MISS_CR_TAG.sub("[CITATION NEEDED]", text)
+    return text
+
 # Matches common academic author-list formats: "Surname, F. M." units,
 # e.g. "Tay, Y., Dehghani, M., Bahri, D.".
 _AUTHOR_UNIT = re.compile(r"([A-Z][A-Za-zÀ-ÖØ-öø-ÿ'\-]+),\s*((?:[A-Z]\.\s*)+)")
@@ -129,6 +147,7 @@ def resolve_and_append_references(
     heading: str = "## References",
 ) -> str:
     """Resolve in-text citation tags and append references for cited sources."""
+    draft_text = flag_placeholder_template_syntax(draft_text)
     draft_text = flag_unverified_freeform_citations(draft_text)
     used_ids = set(CITATION_TAG.findall(draft_text))
     resolved = resolve_in_text_citations(draft_text, citation_registry)
