@@ -77,12 +77,8 @@ def route_source_quality(state: dict) -> str:
 
 def route_citation_verify(state: dict) -> str:
     result = state.get("citation_verification_result", {})
-    passed = result.get("passed", True)
-    feedback = "\n".join(c.get("claim", "") for c in result.get("unverified_claims", []))
-    
-    decision = should_retry(state, "citation_verification", passed, feedback)
-    if decision == "retry":
-        return "citation_verify"
+    if result.get("retry_sections"):
+        return "draft"
     return "merge_cd"
 
 def route_section_critic(state: dict) -> str:
@@ -170,7 +166,7 @@ def build_pipeline_graph() -> StateGraph:
     workflow.add_edge("draft", "citation_verify")
     workflow.add_edge("draft", "section_critic")
     
-    workflow.add_conditional_edges("citation_verify", route_citation_verify, ["citation_verify", "merge_cd"])
+    workflow.add_conditional_edges("citation_verify", route_citation_verify, ["draft", "merge_cd"])
     workflow.add_conditional_edges("section_critic", route_section_critic, ["section_critic", "merge_cd"])
     
     # Fan in C & D
