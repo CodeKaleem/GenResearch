@@ -3,6 +3,7 @@ from services.citation_formatting import (
     format_apa_reference,
     format_in_text_citation,
     flag_unverified_freeform_citations,
+    flag_ungrounded_specifics,
     resolve_and_append_references,
     resolve_in_text_citations,
 )
@@ -114,3 +115,43 @@ def test_resolve_and_append_references_flags_unverified_freeform_citations():
     assert "Davies" not in result
     assert "[CITATION NEEDED]" in result
     assert "(Tay et al., 2022)" in result
+
+
+def test_grounding_gate_allows_supported_specifics_and_flags_invented_case_details():
+    evidence = {
+        "CR-001": "The study by Insilico Medicine evaluated ISM001 in 2021 and reported 60 percent improvement."
+    }
+    grounded = flag_ungrounded_specifics(
+        "Insilico Medicine evaluated ISM001 in 2021 and reported 60 percent improvement [CR-001].",
+        evidence,
+        {"CR-001"},
+        topic="AI drug discovery",
+    )
+    invented = flag_ungrounded_specifics(
+        "Insilico Medicine evaluated ISM002 in 2022 and reported 92% improvement [CR-001].",
+        evidence,
+        {"CR-001"},
+        topic="AI drug discovery",
+    )
+
+    assert "[CITATION NEEDED]" not in grounded
+    assert "[CITATION NEEDED]" in invented
+
+
+def test_grounding_gate_flags_percent_format_mismatch_for_review():
+    result = flag_ungrounded_specifics(
+        "The study reported 92% improvement [CR-001].",
+        {"CR-001": "The study reported 92 percent improvement."},
+        {"CR-001"},
+    )
+
+    assert "[CITATION NEEDED]" in result
+
+
+def test_sources_without_evidence_are_not_resolved_or_listed():
+    registry = [{"id": "CR-001", "title": "Empty source", "evidence_level": "none"}]
+
+    resolved = resolve_and_append_references("Claim [CR-001].", registry)
+
+    assert "(citation needed)" in resolved
+    assert "Empty source" not in resolved

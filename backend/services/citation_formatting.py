@@ -9,6 +9,15 @@ from __future__ import annotations
 import re
 
 CITATION_TAG = re.compile(r"\[(CR-\d{3})\]")
+_NUMBER = re.compile(
+    r"(?<![A-Za-z0-9])\d+(?:[,.]\d+)*(?:\s?%|\s+percent)?(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+_ENTITY = re.compile(
+    r"\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|[A-Z][a-z]+[A-Z][A-Za-z0-9]*|"
+    r"[A-Z]{2,}[A-Z0-9-]*|[A-Z][A-Z0-9-]*\d[A-Z0-9-]*)\b"
+)
+_SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
 _FREEFORM_CITATION = re.compile(
     r"\(\s*[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'\-]+"
@@ -38,6 +47,35 @@ def flag_placeholder_template_syntax(text: str) -> str:
     text = _PLACEHOLDER_AUTHOR_BRACKET.sub("[CITATION NEEDED]", text)
     text = _NEAR_MISS_CR_TAG.sub("[CITATION NEEDED]", text)
     return text
+
+
+def _normalize_grounding_text(text: str) -> str:
+    return " ".join(re.findall(r"\d+(?:[,.]\d+)*%|[a-z0-9]+", text.lower()))
+
+
+def flag_ungrounded_specifics(
+    text: str,
+    evidence_by_source: dict[str, str],
+    valid_source_ids: set[str],
+    topic: str = "",
+) -> str:
+    """Flag sentences without valid citations or with unsupported specifics."""
+    checked_sentences = []
+    for sentence in _SENTENCE.split(text):
+        citation_ids = set(CITATION_TAG.findall(sentence))
+        body = CITATION_TAG.sub("", sentence)
+        evidence = " ".join(evidence_by_source.get(cid, "") for cid in citation_ids)
+        allowed = _normalize_grounding_text(f"{evidence} {topic}")
+        specifics = _NUMBER.findall(body) + _ENTITY.findall(body)
+        unsupported = any(
+            _normalize_grounding_text(specific) not in allowed
+            for specific in dict.fromkeys(specifics)
+        )
+        has_invalid_id = bool(citation_ids - valid_source_ids)
+        if (not citation_ids or has_invalid_id or unsupported) and "[CITATION NEEDED]" not in sentence:
+            sentence = f"{sentence.rstrip()} [CITATION NEEDED]"
+        checked_sentences.append(sentence)
+    return " ".join(checked_sentences)
 
 # Matches common academic author-list formats: "Surname, F. M." units,
 # e.g. "Tay, Y., Dehghani, M., Bahri, D.".
@@ -87,7 +125,11 @@ def format_in_text_citation(entry: dict) -> str:
 
 def resolve_in_text_citations(text: str, citation_registry: list[dict]) -> str:
     """Replace every [CR-XXX] tag with a proper in-text citation."""
-    registry = {entry.get("id"): entry for entry in citation_registry}
+    registry = {
+        entry.get("id"): entry
+        for entry in citation_registry
+        if entry.get("evidence_level") != "none"
+    }
 
     def replace_tag(match: re.Match) -> str:
         entry = registry.get(match.group(1))
@@ -133,6 +175,7 @@ def build_reference_list(
     entries = citation_registry
     if used_ids is not None:
         entries = [entry for entry in entries if entry.get("id") in used_ids]
+    entries = [entry for entry in entries if entry.get("evidence_level") != "none"]
 
     def sort_key(entry: dict) -> str:
         authors = _split_authors(entry.get("authors", ""))
