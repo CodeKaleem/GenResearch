@@ -7,6 +7,8 @@ from services.agents.nodes import draft as draft_module
 from services.agents.nodes.draft import _format_section_context_block
 from services.agents.state import FigureSlot, ProposalState, SectionContext
 from services.citation_formatting import flag_unverified_freeform_citations
+from services.agents.nodes import output as output_module
+from services.agents.nodes.citation_verify import citation_verify_node
 from services.pdf_renderer import APAPDFRenderer, render_markdown_to_pdf
 
 
@@ -166,3 +168,102 @@ def test_pdf_renderer_treats_h4_as_a_heading(monkeypatch):
 
     assert pdf_bytes.startswith(b"%PDF-")
     assert ("Data Collection", 3) in rendered_headings
+
+
+def test_draft_context_uses_registry_ids_and_only_section_sources(monkeypatch):
+    prompts = []
+
+    async def fake_search(**kwargs):
+        return [
+            {"id": "chunk-1", "source_id": "CR-001", "title": "Imaging paper", "text": "Researchers analyzed 20 scans in 2022."},
+            {"id": "chunk-2", "source_id": "CR-002", "title": "Methods paper", "text": "Researchers surveyed 30 clinicians in 2021."},
+        ]
+
+    async def fake_llm(**kwargs):
+        prompts.append(kwargs["prompt"])
+        return "Researchers analyzed 20 scans in 2022 [CR-001]."
+
+    async def skip_verification(section, excerpt_map, session_id=""):
+        return section
+
+    monkeypatch.setattr(draft_module, "semantic_search_session", fake_search)
+    monkeypatch.setattr(draft_module, "call_llm", fake_llm)
+    monkeypatch.setattr(draft_module, "verify_section", skip_verification)
+
+    asyncio.run(
+        draft_module.draft_node(
+            {
+                "topic": "medical imaging",
+                "outline": {"sections": [{"name": "Imaging", "guidance": "imaging scans"}]},
+                "citation_registry": [
+                    {"id": "CR-001", "title": "Imaging paper", "evidence_level": "full_text"},
+                    {"id": "CR-002", "title": "Methods paper", "evidence_level": "full_text"},
+                ],
+                "section_contexts": [{
+                    "section_name": "Imaging",
+                    "section_goal": "Discuss imaging scans.",
+                    "assigned_sources": [{"id": "CR-001", "title": "Imaging paper", "evidence_level": "full_text"}],
+                    "claims": [],
+                    "narrative_prompt": "Use imaging evidence.",
+                }],
+            }
+        )
+    )
+
+    assert "[CR-001 | Imaging paper]" in prompts[0]
+    assert "Methods paper" not in prompts[0]
+
+
+def test_output_node_resolves_docx_citations_and_only_lists_used_sources(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(output_module, "save_report_to_supabase", lambda state: "report-1")
+    monkeypatch.setattr(
+        output_module,
+        "assemble_docx",
+        lambda output, path: captured.update(output=output, path=path) or str(path),
+    )
+
+    asyncio.run(
+        output_module.output_node(
+            {
+                "topic": "Test",
+                "session_id": "session-1",
+                "draft_text": "## Intro\nA claim [CR-001].",
+                "generated_sections": [{"section_name": "Intro", "text": "A claim [CR-001]."}],
+                "citation_registry": [
+                    {"id": "CR-001", "title": "Used paper", "authors": "Doe, J.", "year": 2020},
+                    {"id": "CR-002", "title": "Unused paper", "authors": "Roe, J.", "year": 2021},
+                    {"id": "CR-003", "title": "Empty paper", "evidence_level": "none"},
+                ],
+            }
+        )
+    )
+
+    output = captured["output"]
+    assert "[CR-001]" not in output.sections[0].text
+    assert "(Doe, 2020)" in output.sections[0].text
+    assert len(output.references) == 1
+    assert "Used paper" in output.references[0]
+    assert "Unused paper" not in "\n".join(output.references)
+    assert "Empty paper" not in "\n".join(output.references)
+
+
+def test_citation_verifier_routes_retry_to_only_the_claim_section(monkeypatch):
+    async def fake_llm(**kwargs):
+        return '{"coverage_score": 0.5, "unverified_claims": [{"claim": "unsupported finding", "location": "Results"}]}'
+
+    monkeypatch.setattr("services.agents.nodes.citation_verify.call_llm", fake_llm)
+    result = asyncio.run(
+        citation_verify_node(
+            {
+                "draft_text": "Draft",
+                "citation_registry": [],
+                "generated_sections": [
+                    {"section_name": "Introduction", "text": "Context."},
+                    {"section_name": "Results", "text": "An unsupported finding appears."},
+                ],
+            }
+        )
+    )
+
+    assert result["citation_verification_result"]["retry_sections"] == ["Results"]
