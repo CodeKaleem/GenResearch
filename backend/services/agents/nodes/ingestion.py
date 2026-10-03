@@ -41,25 +41,31 @@ async def ingestion_node(state: dict) -> dict:
 
     for s in user_sources:
         cid = _build_citation_id(len(citation_registry))
+        content = (s.get("content") or "").strip()
+        abstract = (s.get("abstract_snippet") or "").strip()
         citation_registry.append({
             "id": cid, "title": s.get("title", "User Document"),
             "authors": s.get("authors", "Unknown"), "year": s.get("year"),
             "url": s.get("url", ""), "doi": s.get("doi", ""),
             "accessed_date": datetime.utcnow().isoformat(),
             "tag": "user", "source_type": s.get("source_type", "uploaded"),
-            "abstract_snippet": s.get("abstract_snippet", ""),
+            "abstract_snippet": abstract,
+            "evidence_level": "full_text" if content else "abstract" if abstract else "none",
         })
         all_accepted.append({**s, "tag": "user", "citation_id": cid})
 
     for s in accepted_scraped:
         cid = _build_citation_id(len(citation_registry))
+        content = (s.get("content") or "").strip()
+        abstract = (s.get("abstract_snippet") or "").strip()
         citation_registry.append({
             "id": cid, "title": s.get("title", "Unknown"),
             "authors": s.get("authors", "Unknown"), "year": s.get("year"),
             "url": s.get("url", ""), "doi": s.get("doi", ""),
             "accessed_date": s.get("accessed_date", datetime.utcnow().isoformat()),
             "tag": "scraped", "source_type": s.get("source_api", "web"),
-            "abstract_snippet": s.get("abstract_snippet", ""),
+            "abstract_snippet": abstract,
+            "evidence_level": "full_text" if content else "abstract" if abstract else "none",
         })
         all_accepted.append({**s, "tag": "scraped", "citation_id": cid})
 
