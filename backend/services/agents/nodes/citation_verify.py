@@ -50,15 +50,29 @@ async def citation_verify_node(state: dict) -> dict:
     score = result.get("coverage_score", 0)
     result["passed"] = score >= CITATION_VERIFY_THRESHOLD
 
+    generated_sections = state.get("generated_sections", [])
+    failed_sections = set()
+    for issue in result.get("unverified_claims", []):
+        claim = str(issue.get("claim", "")).strip().lower()
+        location = str(issue.get("location", "")).lower()
+        for section in generated_sections:
+            name = str(section.get("section_name", ""))
+            if name and (
+                name.lower() in location
+                or (claim and claim in str(section.get("text", "")).lower())
+            ):
+                failed_sections.add(name)
+
     # A5: Compute retry/flag decision and write state HERE, not in router
     passed = result["passed"]
     feedback = "\n".join(c.get("claim", "") for c in result.get("unverified_claims", []))
     decision = should_retry(state, NODE_NAME, passed, feedback)
+    result["retry_sections"] = sorted(failed_sections) if decision == "retry" else []
 
     extra_state = {}
-    if decision == "retry":
+    if decision == "retry" and failed_sections:
         extra_state = build_retry_state_update(NODE_NAME, feedback, state)
-    elif decision == "flag":
+    elif decision == "flag" or decision == "retry":
         extra_state = build_flag_state_update(NODE_NAME, feedback, state)
 
     return {
