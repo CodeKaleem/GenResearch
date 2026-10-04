@@ -7,24 +7,24 @@ publication-quality research paper drafts that are:
 
 1. **RAG-grounded**: Every claim must be supported by the provided sources.
 2. **Citation-registry bound**: You may ONLY cite sources from the provided citation registry. \
-   Never invent, fabricate, or hallucinate a citation. If you cannot find a source for a claim, \
-   mark it with [CITATION NEEDED] — do NOT make one up.
+    Never invent, fabricate, or hallucinate a citation. If evidence is missing, narrow the claim \
+    or state the limitation — do NOT make one up.
 3. **Structured**: Follow the approved outline exactly.
 4. **Academic**: Formal language, proper paragraph structure, logical flow.
 
 Citation rules:
 - Reference citations only by their exact registry ID: [CR-001], [CR-002], etc.
 - Never write freeform author/year citations such as "(Smith et al., 2020)". If no registry ID
-    supports a claim, mark it [CITATION NEEDED].
+    supports a claim, do not present it as sourced.
 - These will be resolved to full citations in post-processing.
 - Every paragraph that makes a factual claim should have at least one citation.
 - Prioritize user-provided sources (tagged "user") over scraped sources.
-- If sources are thin or tangential, write a shorter, narrower section and mark unsupported claims
-    [CITATION NEEDED] instead of inventing plausible-sounding detail.
+- If relevant assigned sources exist, write only claims they support and keep thinly supported
+    sections short. Use [CITATION NEEDED] only when the section genuinely has no relevant evidence.
 - If the citation registry and retrieved source content below are thin or only tangentially \
     related to the topic, that is a REAL constraint, not a gap to paper over: write shorter, \
-    narrower sections and mark unsupported claims with [CITATION NEEDED] rather than inventing \
-    plausible-sounding detail to fill the space.
+    narrower sections rather than inventing plausible-sounding detail. When no relevant evidence \
+    exists, state the limitation plainly and mark only generic claims that need outside evidence.
 - Marking a claim [CITATION NEEDED] does not license inventing it. Never name a SPECIFIC \
     real-world entity you are not certain is real and relevant — a drug name, a \
     named study, a company, a specific statistic or percentage, a specific date or trial outcome \
@@ -98,8 +98,9 @@ def build_draft_prompt(
     rag_context: str,
     citation_style: str = "apa",
     approval_comment: str = "",
+    section_mode: bool = False,
+    retry_feedback: str = "",
 ) -> str:
-    # Build outline instructions
     sections_text = ""
     for i, section in enumerate(outline.get("sections", []), 1):
         name = section.get("name", f"Section {i}")
@@ -114,7 +115,6 @@ def build_draft_prompt(
         if guidance:
             sections_text += f"Guidance: {guidance}\n"
 
-    # Build citation registry reference
     registry_text = ""
     for entry in citation_registry:
         cid = entry.get("id", "?")
@@ -133,11 +133,39 @@ USER FEEDBACK & REQUESTED EDITS:
 {approval_comment}
 """
 
-    return f"""Write a complete, publication-ready research paper draft.
+    retry_feedback_section = ""
+    if retry_feedback:
+        retry_feedback_section = f"""
+═══════════════════════════════════════
+PREVIOUS VERIFICATION FEEDBACK FOR THIS SECTION:
+═══════════════════════════════════════
+{retry_feedback}
+Revise these claims using only the assigned evidence. Do not repeat unsupported details.
+"""
+
+    opening = (
+        "Write ONE section (body only) of a research paper."
+        if section_mode
+        else "Write a complete, publication-ready research paper draft."
+    )
+    closing = "" if section_mode else (
+        "Now compose the complete research paper draft. Follow the outline structure exactly "
+        "(taking into account any USER FEEDBACK). "
+    )
+    citation_instruction = (
+        "Cite factual claims with their registry IDs. Use [CITATION NEEDED] only when this "
+        "section genuinely has no relevant evidence."
+        if section_mode
+        else "Cite sources using their registry IDs (e.g., [CR-001]). Mark any unsupported claims "
+        "with [CITATION NEEDED]."
+    )
+
+    return f"""{opening}
 
 RESEARCH TOPIC: {topic}
 CITATION STYLE: {citation_style.upper()}
 {user_feedback_section}
+{retry_feedback_section}
 ═══════════════════════════════════════
 APPROVED OUTLINE:
 ═══════════════════════════════════════
@@ -158,8 +186,7 @@ STYLE EXEMPLARS — bracketed TEMPLATES showing structure only, not real content
 ═══════════════════════════════════════
 {FEW_SHOT_EXEMPLARS}
 
-Now compose the complete research paper draft. Follow the outline structure exactly (taking into account any USER FEEDBACK). \
-Cite sources using their registry IDs (e.g., [CR-001]). Mark any unsupported claims with [CITATION NEEDED].
+{closing}{citation_instruction}
 
 Final reminders before you write:
 - Do not start any section with its own title repeated as text, in any form — not bare, not as
