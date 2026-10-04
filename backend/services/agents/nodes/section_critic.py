@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 
+from config import settings
 from services.llm_service import call_llm
 from services.agents.prompts.section_critic import (
     SECTION_CRITIC_SYSTEM, SECTION_CRITIC_THRESHOLD, build_section_critic_prompt,
@@ -33,6 +34,7 @@ async def section_critic_node(state: dict) -> dict:
     raw = await call_llm(
         prompt=prompt, agent_role="section_critic",
         system=SECTION_CRITIC_SYSTEM, temperature=0.2, max_tokens=2000,
+        context_limit=settings.OLLAMA_JUDGE_CONTEXT,
     )
 
     cleaned = raw.strip()

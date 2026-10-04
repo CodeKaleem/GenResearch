@@ -19,7 +19,10 @@ class Settings:
 
     # Ollama (the only LLM provider)
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    OLLAMA_REQUEST_TIMEOUT: float = float(os.getenv("OLLAMA_REQUEST_TIMEOUT", "600"))
+    OLLAMA_JUDGE_CONTEXT: int = int(os.getenv("OLLAMA_JUDGE_CONTEXT", "8192"))
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+    OLLAMA_EMBED_PREFIXES: bool = os.getenv("OLLAMA_EMBED_PREFIXES", "false").lower() in ("true", "1", "yes")
 
     # Heavy tier
     OLLAMA_HEAVY_MODEL: str = os.getenv("OLLAMA_HEAVY_MODEL", "qwen3:8b")

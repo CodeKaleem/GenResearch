@@ -120,7 +120,7 @@ def test_llm_stream_does_not_fallback_after_partial_output(monkeypatch):
             return None
 
         async def aiter_lines(self):
-            yield 'data: {"choices":[{"delta":{"content":"partial"}}]}'
+            yield '{"message":{"content":"partial"},"done":false}'
             raise RuntimeError("stream interrupted")
 
     class FakeClient:
@@ -133,7 +133,7 @@ def test_llm_stream_does_not_fallback_after_partial_output(monkeypatch):
         async def __aexit__(self, *args):
             return None
 
-        def stream(self, method, url, *, headers, json):
+        def stream(self, method, url, *, json, **kwargs):
             requested_models.append(json["model"])
             return FakeResponse(json["model"])
 
