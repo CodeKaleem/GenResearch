@@ -5,10 +5,10 @@
 # ============================================================
 from __future__ import annotations
 
-import json
 import logging
 
 from services.llm_service import call_llm
+from services.agents.json_utils import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -81,17 +81,8 @@ Produce the gap report JSON now:"""
         max_tokens=2000,
     )
 
-    # Parse JSON
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        lines = cleaned.split("\n")
-        cleaned = "\n".join(
-            line for line in lines if not line.strip().startswith("```")
-        )
-
-    try:
-        gap_data = json.loads(cleaned)
-    except json.JSONDecodeError:
+    gap_data = parse_llm_json(raw)
+    if gap_data is None:
         logger.warning("gap_report_json_parse_failed", extra={"raw": raw[:500]})
         gap_data = {
             "covered": [],

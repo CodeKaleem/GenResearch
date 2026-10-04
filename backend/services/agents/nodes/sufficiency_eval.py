@@ -5,7 +5,6 @@
 # ============================================================
 from __future__ import annotations
 
-import json
 import logging
 
 from services.llm_service import call_llm
@@ -19,6 +18,7 @@ from services.agents.retry import (
     build_retry_state_update,
     build_flag_state_update,
 )
+from services.agents.json_utils import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -55,17 +55,8 @@ async def sufficiency_eval_node(state: dict) -> dict:
         max_tokens=2000,
     )
 
-    # Parse JSON
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        lines = cleaned.split("\n")
-        cleaned = "\n".join(
-            line for line in lines if not line.strip().startswith("```")
-        )
-
-    try:
-        report = json.loads(cleaned)
-    except json.JSONDecodeError:
+    report = parse_llm_json(raw)
+    if report is None:
         logger.warning("sufficiency_json_parse_failed", extra={"raw": raw[:500]})
         report = {
             "sections": {},
@@ -102,7 +93,11 @@ async def sufficiency_eval_node(state: dict) -> dict:
     passed = report.get("overall_assessment") == "sufficient"
     feedback = "Material is insufficient. Missing background or sources."
     decision = "proceed" if source_count_override else should_retry(
-        state, NODE_NAME, passed, feedback
+        state,
+        NODE_NAME,
+        passed,
+        feedback,
+        attempts_done=state.get("retry_counts", {}).get(NODE_NAME, 0) + 1,
     )
 
     extra_state = {}

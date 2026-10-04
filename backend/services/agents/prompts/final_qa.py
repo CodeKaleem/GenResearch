@@ -10,7 +10,6 @@ You check things that individual section checks cannot:
 2. **Redundancy**: Is there unnecessary repetition across sections?
 3. **Thesis-Conclusion Alignment**: Does the conclusion actually match the introduction's thesis?
 4. **Scope Consistency**: Does the paper stay within its declared scope?
-5. **Reference Completeness**: Does the References section include all cited sources?
 
 You MUST output valid JSON — nothing else.
 
@@ -20,7 +19,6 @@ Output format:
   "redundancy_issues": ["Section 3 repeats material from Section 2 paragraph 4"],
   "thesis_conclusion_aligned": true,
   "scope_consistent": true,
-  "reference_completeness": 0.95,
   "overall_score": 7.8,
   "passed": true,
   "issues": [

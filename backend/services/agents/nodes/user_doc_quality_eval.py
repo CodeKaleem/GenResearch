@@ -9,11 +9,11 @@
 # ============================================================
 from __future__ import annotations
 
-import json
 import logging
 
 from services.llm_service import call_llm
 from services.agents.retry import increment_attempt
+from services.agents.json_utils import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -75,14 +75,8 @@ Evaluate this document:"""
         max_tokens=300,
     )
 
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        lines = cleaned.split("\n")
-        cleaned = "\n".join(l for l in lines if not l.strip().startswith("```"))
-
-    try:
-        result = json.loads(cleaned)
-    except json.JSONDecodeError:
+    result = parse_llm_json(raw)
+    if result is None:
         # Default to passing if we can't parse
         result = {
             "passed": True,
