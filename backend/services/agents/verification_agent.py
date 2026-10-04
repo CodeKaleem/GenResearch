@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import re
 from typing import Any
@@ -13,6 +12,7 @@ from services.llm_service import call_llm
 from services import tracking
 from services.citation_formatting import ground_ungrounded_specifics
 from services.text_utils import split_sentences
+from services.agents.json_utils import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +44,9 @@ def extract_claims_from_text(section_text: str, section_name: str) -> list[Extra
 
 
 def _parse_json_object(raw: str) -> dict[str, Any]:
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not match:
+    value = parse_llm_json(raw)
+    if value is None:
         raise ValueError("Verification model did not return a JSON object.")
-    value = json.loads(match.group(0))
-    if not isinstance(value, dict):
-        raise ValueError("Verification response must be a JSON object.")
     return value
 
 

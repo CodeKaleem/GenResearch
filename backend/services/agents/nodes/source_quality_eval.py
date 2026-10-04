@@ -6,10 +6,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 
 from services.llm_service import call_llm
+from services.agents.json_utils import parse_llm_json
 from services.agents.retry import (
     increment_attempt,
 )
@@ -67,16 +67,8 @@ Evaluate this source:"""
         max_tokens=500,
     )
 
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        lines = cleaned.split("\n")
-        cleaned = "\n".join(
-            line for line in lines if not line.strip().startswith("```")
-        )
-
-    try:
-        result = json.loads(cleaned)
-    except json.JSONDecodeError:
+    result = parse_llm_json(raw)
+    if result is None:
         # If we can't parse, default to passing (don't block on parse failures)
         result = {
             "passed": True,

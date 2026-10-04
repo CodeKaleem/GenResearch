@@ -5,7 +5,6 @@
 # ============================================================
 from __future__ import annotations
 
-import json
 import logging
 
 from services.llm_service import call_llm
@@ -13,6 +12,7 @@ from services.agents.prompts.questionnaire import (
     QUESTIONNAIRE_SYSTEM,
     build_questionnaire_prompt,
 )
+from services.agents.json_utils import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +34,8 @@ async def questionnaire_node(state: dict) -> dict:
         max_tokens=1500,
     )
 
-    # Parse JSON — handle models that wrap in markdown code blocks
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        # Strip ```json ... ``` wrapper
-        lines = cleaned.split("\n")
-        cleaned = "\n".join(
-            line for line in lines
-            if not line.strip().startswith("```")
-        )
-
-    try:
-        questions_data = json.loads(cleaned)
-    except json.JSONDecodeError:
+    questions_data = parse_llm_json(raw)
+    if questions_data is None:
         logger.warning("questionnaire_json_parse_failed", extra={"raw": raw[:500]})
         # Fallback: wrap raw text as a single text question
         questions_data = {

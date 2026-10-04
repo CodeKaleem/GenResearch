@@ -55,7 +55,7 @@ ROLE_MODEL_CHAINS: dict[str, list[str]] = {
     "composer": ["heavy", "mid"],
     "proposal_review": ["mid", "light"],
     "draft": ["heavy", "mid"],
-    "citation_verification": ["heavy", "mid"],
+    "citation_verification": ["mid", "heavy"],
     "verification": ["light", "mid"],
     "sufficiency_evaluator": ["mid", "light"],
     "gap_report": ["mid", "light"],

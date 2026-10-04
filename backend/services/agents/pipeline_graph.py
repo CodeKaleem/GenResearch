@@ -8,7 +8,7 @@ import logging
 from langgraph.graph import StateGraph, END
 
 from services.agents.state import ProposalState
-from services.agents.retry import should_retry
+from services.agents.retry import get_attempt_count, should_retry
 
 # Import all nodes
 from services.agents.nodes.topic_input import topic_input_node
@@ -44,7 +44,13 @@ def route_sufficiency(state: dict) -> list[str] | str:
     passed = report.get("overall_assessment") == "sufficient"
     feedback = "Material is insufficient. Missing background or sources."
     
-    decision = should_retry(state, "sufficiency_eval", passed, feedback)
+    decision = should_retry(
+        state,
+        "sufficiency_eval",
+        passed,
+        feedback,
+        attempts_done=get_attempt_count(state, "sufficiency_eval"),
+    )
     
     if decision == "retry":
         return "sufficiency_eval" # Retry itself with feedback
@@ -78,16 +84,39 @@ def route_source_quality(state: dict) -> str:
 
 def route_citation_verify(state: dict) -> str:
     result = state.get("citation_verification_result", {})
-    if result.get("retry_sections"):
+    issues = result.get("unverified_claims", [])
+    if not isinstance(issues, list):
+        issues = []
+    feedback = "\n".join(
+        str(issue.get("claim", ""))
+        for issue in issues
+        if isinstance(issue, dict)
+    )
+    decision = should_retry(
+        state,
+        "citation_verification",
+        result.get("passed", True),
+        feedback,
+        attempts_done=get_attempt_count(state, "citation_verification"),
+    )
+    if decision == "retry":
+        if result.get("unknown") or not result.get("retry_sections"):
+            return "citation_verify"
         return "draft"
     return "merge_cd"
 
 def route_section_critic(state: dict) -> str:
     result = state.get("section_critic_result", {})
     passed = result.get("passed", True)
-    feedback = result.get("summary", "")
+    feedback = str(result.get("summary", "") or "")
     
-    decision = should_retry(state, "section_critic", passed, feedback)
+    decision = should_retry(
+        state,
+        "section_critic",
+        passed,
+        feedback,
+        attempts_done=get_attempt_count(state, "section_critic"),
+    )
     if decision == "retry":
         return "section_critic"
     return "merge_cd"
@@ -95,9 +124,18 @@ def route_section_critic(state: dict) -> str:
 def route_final_qa(state: dict) -> str:
     result = state.get("final_qa_result", {})
     passed = result.get("passed", True)
-    feedback = "\n".join(str(i) for i in result.get("issues", []))
+    issues = result.get("issues", [])
+    if not isinstance(issues, list):
+        issues = [issues]
+    feedback = "\n".join(str(issue) for issue in issues)
     
-    decision = should_retry(state, "final_qa", passed, feedback)
+    decision = should_retry(
+        state,
+        "final_qa",
+        passed,
+        feedback,
+        attempts_done=get_attempt_count(state, "final_qa"),
+    )
     if decision == "retry":
         return "final_qa"
     return "output"
@@ -166,7 +204,7 @@ def build_pipeline_graph() -> StateGraph:
     workflow.add_edge("draft", "citation_verify")
     workflow.add_edge("draft", "section_critic")
     
-    workflow.add_conditional_edges("citation_verify", route_citation_verify, ["draft", "merge_cd"])
+    workflow.add_conditional_edges("citation_verify", route_citation_verify, ["citation_verify", "draft", "merge_cd"])
     workflow.add_conditional_edges("section_critic", route_section_critic, ["section_critic", "merge_cd"])
     
     # Fan in C & D

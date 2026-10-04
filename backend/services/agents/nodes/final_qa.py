@@ -7,7 +7,6 @@
 #     the routing function (which can only select the next node).
 # ============================================================
 from __future__ import annotations
-import json
 import logging
 
 from config import settings
@@ -16,9 +15,11 @@ from services.agents.prompts.final_qa import (
     FINAL_QA_SYSTEM, FINAL_QA_THRESHOLD, build_final_qa_prompt,
 )
 from services.agents.retry import (
+    get_attempt_count,
     increment_attempt, should_retry,
     build_retry_state_update, build_flag_state_update,
 )
+from services.agents.json_utils import coerce_score, parse_llm_json
 
 logger = logging.getLogger(__name__)
 NODE_NAME = "final_qa"
@@ -39,38 +40,53 @@ async def final_qa_node(state: dict) -> dict:
         context_limit=settings.OLLAMA_JUDGE_CONTEXT,
     )
 
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        lines = cleaned.split("\n")
-        cleaned = "\n".join(l for l in lines if not l.strip().startswith("```"))
-
-    try:
-        result = json.loads(cleaned)
-    except json.JSONDecodeError:
-        result = {"overall_score": 0, "passed": False,
-                  "summary": "Failed to parse QA output.", "issues": []}
-
-    score = result.get("overall_score", 0)
-    result["passed"] = score >= FINAL_QA_THRESHOLD
+    result = parse_llm_json(raw)
+    score = coerce_score(result.get("overall_score")) if result else None
+    unknown = result is None or score is None
+    attempts_done = get_attempt_count(state, NODE_NAME) + 1
+    if result is None:
+        result = {}
+    if unknown:
+        result.update({
+            "overall_score": None,
+            "unknown": True,
+            "passed": attempts_done >= 2,
+            "summary": "Final QA response was not parseable or had no valid score.",
+            "issues": result.get("issues") or [],
+        })
+    else:
+        result["overall_score"] = score
+        result["passed"] = score >= FINAL_QA_THRESHOLD
 
     # A5: Compute retry/flag decision and write state HERE, not in router
     passed = result["passed"]
     feedback = "\n".join(str(i) for i in result.get("issues", []))
-    decision = should_retry(state, NODE_NAME, passed, feedback)
+    if unknown and attempts_done == 1:
+        feedback = "Final QA returned an unknown result; retry evaluation once."
+    decision = should_retry(
+        state,
+        NODE_NAME,
+        passed,
+        feedback,
+        attempts_done=attempts_done,
+    )
 
     extra_state = {}
-    if decision == "retry":
+    if unknown and attempts_done >= 2:
+        extra_state = build_flag_state_update(NODE_NAME, feedback, state)
+    elif decision == "retry":
         extra_state = build_retry_state_update(NODE_NAME, feedback, state)
     elif decision == "flag":
         extra_state = build_flag_state_update(NODE_NAME, feedback, state)
 
+    score_label = f"{score:g}" if score is not None else "unknown"
     return {
         "final_qa_result": result,
         "current_step": "final_qa",
         **attempt_update,
         **extra_state,
         "steps_log": [
-            f"✓ Final QA: {score}/10 "
+            f"✓ Final QA: {score_label}/10 "
             f"({'PASSED' if result['passed'] else 'NEEDS REVIEW'})"
         ],
     }

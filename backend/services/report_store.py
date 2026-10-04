@@ -61,7 +61,9 @@ def build_completion_guide_text(state: dict) -> str:
 
     lines.append("")
     lines.append("## 3. Quality Metrics")
-    lines.append(f"- **Citation Grounding:** {cv_res.get('coverage_score', 0):.0%} coverage")
+    coverage_score = cv_res.get("coverage_score")
+    coverage_label = f"{coverage_score:.0%}" if isinstance(coverage_score, (int, float)) else "unknown"
+    lines.append(f"- **Citation Grounding:** {coverage_label} coverage")
     lines.append(f"- **Writing Quality:** {sc_res.get('overall_score', 0)}/10")
     lines.append(f"- **Overall Pipeline QA:** {qa_res.get('overall_score', 0)}/10")
     lines.append("")

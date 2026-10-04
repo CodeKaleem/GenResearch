@@ -7,7 +7,6 @@
 # ============================================================
 from __future__ import annotations
 
-import json
 import logging
 
 from services.llm_service import call_llm
@@ -15,6 +14,7 @@ from services.agents.prompts.outline import (
     OUTLINE_SYSTEM,
     build_outline_prompt,
 )
+from services.agents.json_utils import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +42,8 @@ async def outline_plan_node(state: dict) -> dict:
         max_tokens=2000,
     )
 
-    # Parse JSON
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        lines = cleaned.split("\n")
-        cleaned = "\n".join(
-            line for line in lines if not line.strip().startswith("```")
-        )
-
-    try:
-        outline_data = json.loads(cleaned)
-    except json.JSONDecodeError:
+    outline_data = parse_llm_json(raw)
+    if outline_data is None:
         logger.warning("outline_json_parse_failed", extra={"raw": raw[:500]})
         # Fallback: basic academic structure
         outline_data = {
