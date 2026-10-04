@@ -8,6 +8,7 @@ from docx import Document
 from docx.shared import Inches
 
 from models.schemas import ProposalOutput
+from services.docx_export import _clean_markdown
 
 
 HUMAN_INPUT_TRIGGERS = (
@@ -23,7 +24,14 @@ HUMAN_INPUT_TRIGGERS = (
 def human_input_checklist(output: ProposalOutput) -> list[str]:
     """Identify methodology decisions that cannot be safely invented."""
     checklist = list(output.human_input_needed)
-    methodology = next((section.text.lower() for section in output.sections if section.section_name == "methodology"), "")
+    methodology = next(
+        (
+            section.text.lower()
+            for section in output.sections
+            if section.section_name.strip().lower() == "methodology"
+        ),
+        "",
+    )
     for trigger in HUMAN_INPUT_TRIGGERS:
         if trigger in methodology:
             item = f"Confirm the methodology detail involving {trigger}."
@@ -42,7 +50,12 @@ def assemble_docx(output: ProposalOutput, path: str | Path) -> str:
         document.add_heading(section.section_name.replace("_", " ").title(), level=1)
         for paragraph in re.split(r"\n\s*\n", section.text.strip()):
             if paragraph.strip():
-                document.add_paragraph(paragraph.strip())
+                heading = re.match(r"^(#{1,6})\s+(.+)$", paragraph.strip())
+                if heading:
+                    level = min(len(heading.group(1)), 4)
+                    document.add_heading(_clean_markdown(heading.group(2)), level=level)
+                else:
+                    document.add_paragraph(_clean_markdown(paragraph.strip()))
     for figure in output.figures:
         if Path(figure).exists():
             document.add_picture(figure, width=Inches(5.5))

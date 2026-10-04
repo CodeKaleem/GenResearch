@@ -55,9 +55,15 @@ async def run_literature_review(
             "status": "empty",
         }
 
-    # Sort chunks by relevance (distance)
-    all_chunks.sort(key=lambda c: c.get("distance", 1.0))
-    top_chunks = all_chunks[:20]  # Use top 20 most relevant chunks
+    # Keep each paper represented instead of letting one paper dominate the global top-k.
+    chunks_by_paper: dict[str, list[dict]] = {}
+    for chunk in all_chunks:
+        paper_key = chunk.get("paper_id") or chunk.get("title", "Unknown")
+        chunks_by_paper.setdefault(paper_key, []).append(chunk)
+    top_chunks = []
+    for paper_chunks in chunks_by_paper.values():
+        paper_chunks.sort(key=lambda chunk: chunk.get("distance", 1.0))
+        top_chunks.extend(paper_chunks[:4])
 
     context = "\n\n---\n\n".join(
         f"[Paper: {c.get('title', 'Unknown')} | Excerpt {i+1}]\n{c['text']}"

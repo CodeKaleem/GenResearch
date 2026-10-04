@@ -12,9 +12,13 @@ logger = logging.getLogger(__name__)
 def _insert(table: str, payload: dict[str, Any]) -> None:
     try:
         get_supabase().table(table).insert(payload).execute()
-    except Exception:
+    except Exception as error:
         # Tracking is best effort and must never break the research request.
-        pass
+        logger.warning(
+            "tracking_insert_failed",
+            extra={"table": table, "error": str(error)},
+            exc_info=True,
+        )
 
 
 def create_task(user_id: str, title: str, agent_type: str, paper_count: int = 0) -> str | None:

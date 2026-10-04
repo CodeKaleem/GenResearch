@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import logging
 import asyncio
+import re
 from datetime import datetime
+from html.parser import HTMLParser
 from typing import Optional
 
 import aiohttp
@@ -28,6 +30,37 @@ logger = logging.getLogger(__name__)
 
 # Timeout for external API calls
 API_TIMEOUT = aiohttp.ClientTimeout(total=30)
+ABSTRACT_SNIPPET_LENGTH = 1500
+
+
+class _AbstractTextParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+
+def _clean_abstract(abstract: str) -> str:
+    parser = _AbstractTextParser()
+    parser.feed(abstract or "")
+    return re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
+
+
+def _crossref_year(item: dict) -> int | None:
+    for field in ("published-print", "issued", "published-online"):
+        date_parts = (item.get(field) or {}).get("date-parts") or []
+        if date_parts and date_parts[0]:
+            try:
+                return int(date_parts[0][0])
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _title_key(title: object) -> str:
+    return str(title or "").strip().casefold()
 
 
 async def search_semantic_scholar(
@@ -73,7 +106,7 @@ async def search_semantic_scholar(
                 "year": p.get("year"),
                 "url": p.get("url", ""),
                 "doi": doi,
-                "abstract_snippet": (p.get("abstract") or "")[:300],
+                "abstract_snippet": (p.get("abstract") or "")[:ABSTRACT_SNIPPET_LENGTH],
                 "citation_count": p.get("citationCount", 0),
                 "source_api": "semantic_scholar",
                 "accessed_date": datetime.utcnow().isoformat(),
@@ -150,7 +183,7 @@ async def search_arxiv(
                 "year": year,
                 "url": link,
                 "doi": "",
-                "abstract_snippet": ((summary_el.text or "").strip()[:300]) if summary_el is not None else "",
+                "abstract_snippet": ((summary_el.text or "").strip()[:ABSTRACT_SNIPPET_LENGTH]) if summary_el is not None else "",
                 "source_api": "arxiv",
                 "accessed_date": datetime.utcnow().isoformat(),
             })
@@ -178,7 +211,7 @@ async def search_crossref(
     params = {
         "query": query,
         "rows": limit,
-        "select": "title,author,published-print,DOI,URL,abstract,is-referenced-by-count",
+        "select": "title,author,published-print,published-online,issued,DOI,URL,abstract,is-referenced-by-count",
     }
     headers = {"User-Agent": "GenResearch/0.2.0 (mailto:research@genresearch.dev)"}
 
@@ -195,7 +228,8 @@ async def search_crossref(
 
         results = []
         for item in data.get("message", {}).get("items", []):
-            title = item.get("title", ["Unknown"])[0] if item.get("title") else "Unknown"
+            titles = item.get("title") or []
+            title = (titles[0] if titles else None) or "Unknown"
             
             author_names = []
             for a in item.get("author", []):
@@ -208,10 +242,8 @@ async def search_crossref(
             
             authors = ", ".join(author_names) if author_names else "Unknown"
             
-            year = None
-            pub = item.get("published-print", {})
-            if "date-parts" in pub and pub["date-parts"]:
-                year = pub["date-parts"][0][0]
+            year = _crossref_year(item)
+            abstract = _clean_abstract(item.get("abstract") or "")
 
             results.append({
                 "title": title,
@@ -219,7 +251,7 @@ async def search_crossref(
                 "year": year,
                 "url": item.get("URL", ""),
                 "doi": item.get("DOI", ""),
-                "abstract_snippet": item.get("abstract", "")[:300] if item.get("abstract") else "",
+                "abstract_snippet": abstract[:ABSTRACT_SNIPPET_LENGTH],
                 "citation_count": item.get("is-referenced-by-count", 0),
                 "source_api": "crossref",
                 "accessed_date": datetime.utcnow().isoformat(),
@@ -312,13 +344,25 @@ async def gather_sources_for_gaps(
     Returns:
         (found_sources, unfilled_gaps, errors) — sources found, gaps with no results, and a list of API error messages.
     """
-    existing_titles = set()
-    if existing_sources:
-        existing_titles = {s.get("title", "").lower() for s in existing_sources}
+    existing_titles = {
+        _title_key(source.get("title"))
+        for source in (existing_sources or [])
+        if _title_key(source.get("title"))
+    }
 
     all_found: list[dict] = []
     unfilled: list[dict] = []
     errors: list[str] = []
+
+    def add_unique_sources(results: list[dict], gap_sources: list[dict], gap: dict) -> None:
+        for source in results:
+            title = source.get("title") or "Unknown"
+            title_key = _title_key(title)
+            if title_key not in existing_titles:
+                source["title"] = title
+                source["gap_topic"] = gap.get("topic", "")
+                gap_sources.append(source)
+                existing_titles.add(title_key)
 
     async with aiohttp.ClientSession(timeout=API_TIMEOUT) as session:
         for gap in gaps:
@@ -333,11 +377,7 @@ async def gather_sources_for_gaps(
             res = await search_semantic_scholar(query, limit=sources_per_gap, session=session)
             if res["status"] == "error":
                 errors.append(res["error"])
-            for s in res["results"]:
-                if s["title"].lower() not in existing_titles:
-                    s["gap_topic"] = gap.get("topic", "")
-                    gap_sources.append(s)
-                    existing_titles.add(s["title"].lower())
+            add_unique_sources(res["results"], gap_sources, gap)
 
             # Priority 2: arXiv (if Semantic Scholar didn't fill the gap)
             if len(gap_sources) < sources_per_gap:
@@ -345,11 +385,7 @@ async def gather_sources_for_gaps(
                 res = await search_arxiv(query, limit=remaining, session=session)
                 if res["status"] == "error":
                     errors.append(res["error"])
-                for s in res["results"]:
-                    if s["title"].lower() not in existing_titles:
-                        s["gap_topic"] = gap.get("topic", "")
-                        gap_sources.append(s)
-                        existing_titles.add(s["title"].lower())
+                add_unique_sources(res["results"], gap_sources, gap)
                         
             # Priority 3: CrossRef (A8)
             if len(gap_sources) < sources_per_gap:
@@ -357,11 +393,7 @@ async def gather_sources_for_gaps(
                 res = await search_crossref(query, limit=remaining, session=session)
                 if res["status"] == "error":
                     errors.append(res["error"])
-                for s in res["results"]:
-                    if s["title"].lower() not in existing_titles:
-                        s["gap_topic"] = gap.get("topic", "")
-                        gap_sources.append(s)
-                        existing_titles.add(s["title"].lower())
+                add_unique_sources(res["results"], gap_sources, gap)
 
             # Priority 4: OpenAlex (if still not enough)
             if len(gap_sources) < sources_per_gap:
@@ -369,11 +401,7 @@ async def gather_sources_for_gaps(
                 res = await search_openalex(query, limit=remaining, session=session)
                 if res["status"] == "error":
                     errors.append(res["error"])
-                for s in res["results"]:
-                    if s["title"].lower() not in existing_titles:
-                        s["gap_topic"] = gap.get("topic", "")
-                        gap_sources.append(s)
-                        existing_titles.add(s["title"].lower())
+                add_unique_sources(res["results"], gap_sources, gap)
 
             if gap_sources:
                 all_found.extend(gap_sources)
