@@ -213,6 +213,12 @@ def resolve_and_append_references(
     heading: str = "## References",
 ) -> str:
     """Resolve in-text citation tags and append references for cited sources."""
+    if (
+        not CITATION_TAG.search(draft_text)
+        and re.search(r"(?im)^\s*##\s+references\s*$", draft_text)
+    ):
+        return draft_text
+
     draft_text = flag_placeholder_template_syntax(draft_text)
     draft_text = flag_unverified_freeform_citations(draft_text)
     draft_text = collapse_duplicate_citation_markers(draft_text)

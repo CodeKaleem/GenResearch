@@ -266,7 +266,11 @@ def test_draft_rebuilds_context_for_renamed_approved_section(monkeypatch):
 
 def test_output_node_resolves_docx_citations_and_only_lists_used_sources(monkeypatch):
     captured = {}
-    monkeypatch.setattr(output_module, "save_report_to_supabase", lambda state: "report-1")
+    monkeypatch.setattr(
+        output_module,
+        "save_report_to_supabase",
+        lambda state: captured.update(saved_draft=state.get("draft_text")) or "report-1",
+    )
     monkeypatch.setattr(
         output_module,
         "assemble_docx",
@@ -290,6 +294,8 @@ def test_output_node_resolves_docx_citations_and_only_lists_used_sources(monkeyp
     )
 
     output = captured["output"]
+    assert "(Doe, 2020)" in captured["saved_draft"]
+    assert "[CR-001]" not in captured["saved_draft"]
     assert "[CR-001]" not in output.sections[0].text
     assert "(Doe, 2020)" in output.sections[0].text
     assert len(output.references) == 1
