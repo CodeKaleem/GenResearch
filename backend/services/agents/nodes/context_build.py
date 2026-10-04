@@ -3,7 +3,11 @@ from __future__ import annotations
 import logging
 import re
 
+from services.rag_service import semantic_search_session
+
 logger = logging.getLogger(__name__)
+
+_SYNTHESIS_SECTIONS = {"abstract", "introduction", "discussion", "conclusion", "summary"}
 
 _STOPWORDS = {
     "the", "a", "an", "of", "in", "on", "for", "and", "or", "to", "with", "is", "are",
@@ -52,6 +56,40 @@ def _select_relevant_sources(section_name: str, guidance: str, registry: list[di
     return [source for _, source in scored[:limit]]
 
 
+def _sources_from_hits(
+    hits: list[dict], registry: list[dict], limit: int = 4
+) -> list[dict]:
+    """Rank distinct registry sources by their best section-retrieval distance."""
+    eligible = {
+        source.get("id"): source
+        for source in registry
+        if source.get("id") and source.get("evidence_level") != "none"
+    }
+    best_hits: dict[str, tuple[float, int]] = {}
+    for hit in hits:
+        source_id = hit.get("source_id")
+        source = eligible.get(source_id)
+        if source is None:
+            continue
+        overlap = len(
+            _tokenize(f"{source.get('title', '')} {source.get('abstract_snippet', '')}")
+            & _tokenize(hit.get("text", ""))
+        )
+        distance = float(hit.get("distance", 1.0))
+        previous = best_hits.get(source_id)
+        if previous is None or (distance, -overlap) < (previous[0], -previous[1]):
+            best_hits[source_id] = (distance, overlap)
+
+    ranked_ids = sorted(
+        best_hits,
+        key=lambda source_id: (
+            best_hits[source_id][0],
+            -best_hits[source_id][1],
+        ),
+    )
+    return [eligible[source_id] for source_id in ranked_ids[:limit]]
+
+
 async def context_build_node(state: dict) -> dict:
     """
     Build section-level working context before drafting.
@@ -68,6 +106,8 @@ async def context_build_node(state: dict) -> dict:
     """
     outline = state.get("outline", {})
     registry = state.get("citation_registry", [])
+    topic = state.get("topic", "")
+    session_id = state.get("session_id", "")
     sections = outline.get("sections", [])
 
     if not sections:
@@ -81,11 +121,42 @@ async def context_build_node(state: dict) -> dict:
 
     section_contexts: list[dict] = []
     figure_slots: list[dict] = []
+    flagged_items: list[dict] = []
+    eligible_registry = [
+        source for source in registry if source.get("evidence_level") != "none"
+    ]
+    global_hits = await semantic_search_session(
+        session_id=session_id, query=topic, top_k=10
+    ) if session_id and eligible_registry else []
+    global_sources = _sources_from_hits(global_hits, eligible_registry)
 
     for index, section in enumerate(sections):
         section_name = section.get("name", f"Section {index + 1}")
         guidance = section.get("guidance") or section.get("goal") or f"Develop the {section_name} section with section-specific evidence and reasoning."
-        assigned_sources = _select_relevant_sources(section_name, guidance, registry)
+        is_synthesis = section_name.strip().lower() in _SYNTHESIS_SECTIONS
+        section_hits = []
+        if session_id and eligible_registry:
+            section_hits = await semantic_search_session(
+                session_id=session_id,
+                query=f"{topic} {section_name} {guidance}",
+                top_k=10,
+            )
+        assigned_sources = _sources_from_hits(section_hits, registry)
+        if not assigned_sources:
+            if global_sources:
+                assigned_sources = global_sources
+            elif is_synthesis:
+                assigned_sources = eligible_registry[:4]
+            else:
+                assigned_sources = _select_relevant_sources(
+                    section_name, guidance, registry
+                )
+        if not assigned_sources:
+            flagged_items.append({
+                "node": "context_build",
+                "issue": f"Section {section_name} has no sources",
+                "action_required": "Add or re-index relevant source material before relying on this section.",
+            })
 
         claims = [
             {
@@ -126,6 +197,7 @@ async def context_build_node(state: dict) -> dict:
     return {
         "section_contexts": section_contexts,
         "figure_slots": figure_slots,
+        "flagged_items": flagged_items,
         "current_step": "context_build",
         "status": "running",
         "steps_log": [

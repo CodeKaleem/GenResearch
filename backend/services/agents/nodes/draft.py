@@ -18,7 +18,7 @@ from services.citation_formatting import (
     flag_unverified_freeform_citations,
     flag_ungrounded_specifics,
 )
-from services.agents.nodes.context_build import _select_relevant_sources
+from services.agents.nodes.context_build import context_build_node
 from services.agents.verification_agent import verify_section
 
 logger = logging.getLogger(__name__)
@@ -93,25 +93,6 @@ async def draft_node(state: dict) -> dict:
     citation_style = state.get("citation_style", "apa")
     section_contexts = state.get("section_contexts", [])
 
-    rag_chunks = await semantic_search_session(
-        session_id=session_id, query=topic, top_k=20
-    )
-
-    for section in outline.get("sections", [])[:5]:
-        section_query = f"{topic} {section.get('name', '')}"
-        section_chunks = await semantic_search_session(
-            session_id=session_id, query=section_query, top_k=5
-        )
-        rag_chunks.extend(section_chunks)
-
-    seen_ids = set()
-    unique_chunks = []
-    for c in rag_chunks:
-        cid = c.get("id", "")
-        if cid not in seen_ids:
-            seen_ids.add(cid)
-            unique_chunks.append(c)
-
     if outline.get("sections"):
         sections = []
         draft_sections: list[str] = []
@@ -132,25 +113,33 @@ async def draft_node(state: dict) -> dict:
                 continue
             section_context = next(
                 (item for item in section_contexts if item.get("section_name") == section_name),
-                {
-                    "section_name": section_name,
-                    "section_goal": section.get("guidance", "Write the section with clear academic reasoning."),
-                    "assigned_sources": _select_relevant_sources(
-                        section_name, section.get("guidance", ""), registry
-                    ),
-                    "claims": [],
-                    "figure_slots": [],
-                    "narrative_prompt": f"Write the {section_name} section grounded in the research evidence.",
-                },
+                None,
             )
+            if section_context is None:
+                rebuilt = await context_build_node({
+                    **state,
+                    "outline": {"sections": [section]},
+                })
+                section_context = (rebuilt.get("section_contexts") or [{}])[0]
             assigned_sources = [
                 source for source in section_context.get("assigned_sources", [])
                 if source.get("evidence_level") != "none"
             ]
             assigned_ids = {source.get("id") for source in assigned_sources}
+            section_evidence = await semantic_search_session(
+                session_id=session_id,
+                query=f"{topic} {section_name}",
+                top_k=8,
+                source_ids=sorted(assigned_ids),
+            )
             section_evidence = [
-                chunk for chunk in unique_chunks
+                chunk for chunk in section_evidence
                 if chunk.get("source_id") in assigned_ids
+            ]
+            seen_chunk_ids = set()
+            section_evidence = [
+                chunk for chunk in section_evidence
+                if not (chunk.get("id") in seen_chunk_ids or seen_chunk_ids.add(chunk.get("id")))
             ]
             source_titles = {source.get("id"): source.get("title", "Unknown") for source in assigned_sources}
             rag_context = "\n\n---\n\n".join(
@@ -217,7 +206,12 @@ async def draft_node(state: dict) -> dict:
 
     eligible_sources = [source for source in registry if source.get("evidence_level") != "none"]
     eligible_ids = {source.get("id") for source in eligible_sources}
-    fallback_chunks = [chunk for chunk in unique_chunks if chunk.get("source_id") in eligible_ids]
+    fallback_chunks = await semantic_search_session(
+        session_id=session_id,
+        query=topic,
+        top_k=20,
+        source_ids=sorted(eligible_ids),
+    )
     source_titles = {source.get("id"): source.get("title", "Unknown") for source in eligible_sources}
     rag_context = "\n\n---\n\n".join(
         f"[{c.get('source_id')} | {source_titles.get(c.get('source_id'), c.get('title', 'Unknown'))}]\n{c.get('text', '')}"

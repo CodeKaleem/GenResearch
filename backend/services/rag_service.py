@@ -61,21 +61,27 @@ async def semantic_search_session(
     session_id: str,
     query: str,
     top_k: int = 5,
+    source_ids: list[str] | None = None,
 ) -> list[dict]:
     """
     Session-scoped semantic search for the pipeline draft node.
     Queries ONLY the session's ChromaDB collection — guarantees
     that chunks from different topics/sessions never leak.
     """
+    if source_ids is not None and not source_ids:
+        return []
+
     query_embedding = await embed_single(query)
     collection = get_session_collection(session_id)
 
     if collection.count() == 0:
         return []
 
+    where_filter = {"source_id": {"$in": source_ids}} if source_ids is not None else None
     results = collection.query(
         query_embeddings=[query_embedding],
         n_results=min(top_k, collection.count()),
+        where=where_filter,
         include=["documents", "metadatas", "distances"],
     )
 
