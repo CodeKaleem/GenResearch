@@ -11,7 +11,7 @@ from services.llm_service import call_llm
 from services import tracking
 
 
-EVIDENCE_TAG = re.compile(r"\[E(\d+)\]")
+EVIDENCE_TAG = re.compile(r"\[(E\d+|CR-\d{3})\]")
 PLACEHOLDER = re.compile(r"\b(?:CITATION\s+NEEDED|TODO|TBD)\b", re.IGNORECASE)
 
 
@@ -31,7 +31,7 @@ def extract_claims_from_text(section_text: str, section_name: str) -> list[Extra
         claims.append(ExtractedClaim(
             claim_id=_claim_id(section_name, sentence),
             text=sentence,
-            cited_chunk_ids=[f"E{number}" for number in EVIDENCE_TAG.findall(sentence)],
+            cited_chunk_ids=EVIDENCE_TAG.findall(sentence),
             section=section_name,
         ))
     return claims
@@ -57,6 +57,12 @@ async def verify_claim(
             claim_id=claim.claim_id,
             verdict="unsupported",
             discrepancy="Claim has no evidence tag.",
+        )
+    if any(not excerpt_map.get(tag) for tag in claim.cited_chunk_ids):
+        return VerificationResult(
+            claim_id=claim.claim_id,
+            verdict="unsupported",
+            discrepancy="A cited evidence excerpt is unavailable.",
         )
     if PLACEHOLDER.search(claim.text):
         return VerificationResult(
@@ -114,7 +120,7 @@ async def verify_section(
         )
     text = section.text
     for claim, result in zip(claims, results):
-        if result.verdict == "unsupported":
+        if result.verdict == "unsupported" and not PLACEHOLDER.search(claim.text):
             text = text.replace(claim.text, "").strip()
         elif result.verdict == "partial" and result.corrected_text:
             text = text.replace(claim.text, result.corrected_text)
