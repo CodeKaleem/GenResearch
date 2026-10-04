@@ -2,6 +2,7 @@
 # GenResearch — Pipeline Router
 # Replaces agent_tasks.py for the new 14-stage pipeline.
 # ============================================================
+import asyncio
 import json
 import logging
 import uuid
@@ -127,6 +128,7 @@ async def start_pipeline(req: StartPipelineRequest):
         "state": initial_state,
         "config": thread_config,
         "task_id": task_id,
+        "stream_lock": asyncio.Lock(),
     }
     
     return {"session_id": session_id, "status": "initialized"}
@@ -140,9 +142,15 @@ async def stream_pipeline(session_id: str):
         
     session_data = _sessions[session_id]
     config = session_data["config"]
-    
-    # Determine if we need to resume or start fresh
-    current_state = _pipeline_graph.get_state(config)
+    stream_lock = session_data.setdefault("stream_lock", asyncio.Lock())
+    if stream_lock.locked():
+        raise HTTPException(status_code=409, detail="Pipeline stream is already active for this session.")
+    await stream_lock.acquire()
+    try:
+        current_state = _pipeline_graph.get_state(config)
+    except Exception:
+        stream_lock.release()
+        raise
     
     async def sse_generator() -> AsyncGenerator[str, None]:
         session_token = request_context.set_session_id(session_id)
@@ -228,6 +236,7 @@ async def stream_pipeline(session_id: str):
         finally:
             request_context.reset_user_id(user_token)
             request_context.reset_session_id(session_token)
+            stream_lock.release()
 
     return StreamingResponse(sse_generator(), media_type="application/x-ndjson")
 

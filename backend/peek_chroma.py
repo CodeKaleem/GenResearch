@@ -3,7 +3,6 @@
 # Use this to verify stored chunks and metadata
 # ============================================================
 import chromadb
-from chromadb.config import Settings as ChromaSettings
 from pathlib import Path
 import json
 

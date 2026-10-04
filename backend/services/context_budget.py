@@ -4,6 +4,7 @@ from __future__ import annotations
 from models.schemas import RetrievedChunk
 
 
+# currently unused by runtime agents.
 def fit_to_budget(chunks: list[RetrievedChunk], budget_tokens: int) -> list[RetrievedChunk]:
     """Keep highest-scored chunks until an approximate token budget is full."""
     if budget_tokens <= 0:

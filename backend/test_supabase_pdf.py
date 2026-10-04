@@ -29,7 +29,7 @@ def test():
     try:
         pdf_bytes = render_markdown_to_pdf(completion_guide, title=f"Guide: {topic}")
         print(f"Success! PDF bytes length: {len(pdf_bytes)}")
-    except Exception as e:
+    except Exception:
         import traceback
         print("FAILED to render PDF:")
         traceback.print_exc()

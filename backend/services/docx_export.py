@@ -6,8 +6,7 @@ from __future__ import annotations
 
 import re
 import docx
-from docx.shared import Pt, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Inches
 
 def _clean_markdown(text: str) -> str:
     """Very basic markdown cleanup for word export."""
@@ -122,7 +121,7 @@ def generate_completion_guide_docx(
             p.add_run(f"[{item.get('node', 'Unknown')}] ").bold = True
             p.add_run(item.get('issue', ''))
             if item.get('action_required'):
-                p.add_run(f"\nAction Required: ").italic = True
+                p.add_run("\nAction Required: ").italic = True
                 p.add_run(item.get('action_required'))
 
     # 2. Sufficiency Review
