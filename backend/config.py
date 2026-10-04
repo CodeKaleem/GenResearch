@@ -14,8 +14,7 @@ class Settings:
     # App
     APP_NAME: str = os.getenv("APP_NAME", "GenResearch")
     APP_VERSION: str = os.getenv("APP_VERSION", "0.3.0")
-    DEBUG: bool = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "super-secret-key-for-dev")
+    DEBUG: bool = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
 
     # Ollama (the only LLM provider)
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")

@@ -7,6 +7,7 @@ from services.code_exec_service import run_sandboxed
 from services.llm_service import call_llm
 
 
+# currently unused; chart generation is not wired into the proposal pipeline.
 async def generate_chart(table_data: dict, request: str, output_dir: str | None = None) -> dict:
     code = await call_llm(
         f"""Write Python using only pandas, matplotlib, numpy, and json to answer: {request!r}.
