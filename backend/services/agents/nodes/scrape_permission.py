@@ -18,10 +18,18 @@ async def scrape_permission_node(state: dict) -> dict:
     In LangGraph, this node sets status to 'awaiting_scrape_permission'.
     The interrupt is handled by the graph's interrupt_before configuration.
     """
-    return {
+    result = {
         "status": "awaiting_scrape_permission",
         "current_step": "scrape_permission",
         "steps_log": [
             "⏸ Insufficient material — awaiting permission to search for external sources"
         ],
     }
+    if not state.get("scrape_permission_granted", False):
+        result["flagged_items"] = [{
+            "node": "scrape_permission",
+            "issue": "Scraping denied by user despite insufficient material.",
+            "attempts": 1,
+            "action_required": "Consider allowing scraping if draft quality is poor.",
+        }]
+    return result

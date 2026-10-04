@@ -327,6 +327,8 @@ and ensure it meets publication standards.""",
         temperature=0.3,
         max_tokens=4096,
     )
+    if len(reviewed.strip()) < 0.7 * len(proposal.strip()):
+        reviewed = proposal
 
     return {
         "proposal": reviewed,

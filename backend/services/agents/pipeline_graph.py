@@ -70,12 +70,6 @@ def route_scrape_permission(state: dict) -> list[str]:
         return ["outline_plan", "gap_report"]
     else:
         # User denied scraping: skip gap report/source gathering, proceed with what we have
-        state.setdefault("flagged_items", []).append({
-            "node": "scrape_permission",
-            "issue": "Scraping denied by user despite insufficient material.",
-            "attempts": 1,
-            "action_required": "Consider allowing scraping if draft quality is poor.",
-        })
         return ["outline_plan", "ingestion"]
 
 def route_source_quality(state: dict) -> str:

@@ -24,6 +24,14 @@ router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 _sessions = {}
 
 
+def _scale_qa_score(score) -> int | None:
+    """Convert the final QA 0-10 score to the task table's 0-100 scale."""
+    try:
+        return round(float(score) * 10)
+    except (TypeError, ValueError):
+        return None
+
+
 class StartPipelineRequest(BaseModel):
     user_id: str
     topic: str
@@ -184,7 +192,9 @@ async def stream_pipeline(session_id: str):
                 }) + "\n"
             elif not next_nodes:
                  final_values = final_state.values
-                 qa_score = final_values.get("final_qa_result", {}).get("overall_score")
+                 qa_score = _scale_qa_score(
+                     final_values.get("final_qa_result", {}).get("overall_score")
+                 )
                  tracking.complete_task(session_data.get("task_id"), "completed", qa_score)
                  if final_values.get("draft_text"):
                      tracking.save_task_result(

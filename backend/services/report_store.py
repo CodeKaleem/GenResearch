@@ -2,7 +2,6 @@
 # GenResearch — Report Store (C2)
 # Saves generated reports to Supabase instead of local files.
 # ============================================================
-import json
 import logging
 from database.supabase_client import get_supabase
 
@@ -13,10 +12,17 @@ def build_completion_guide_text(state: dict) -> str:
     """Builds a markdown string for the completion guide based on state."""
     topic = state.get("topic", "Research Paper")
     sufficiency = state.get("sufficiency_report", {})
+    if not isinstance(sufficiency, dict):
+        sufficiency = {}
     flags = state.get("flagged_items", [])
+    if not isinstance(flags, list):
+        flags = []
     cv_res = state.get("citation_verification_result", {})
     sc_res = state.get("section_critic_result", {})
     qa_res = state.get("final_qa_result", {})
+    cv_res = cv_res if isinstance(cv_res, dict) else {}
+    sc_res = sc_res if isinstance(sc_res, dict) else {}
+    qa_res = qa_res if isinstance(qa_res, dict) else {}
 
     lines = [
         f"# Completion Guide: {topic}",
@@ -27,15 +33,23 @@ def build_completion_guide_text(state: dict) -> str:
         "### Section Breakdown:"
     ]
 
-    for section, data in sufficiency.get("sections", {}).items():
-        lines.append(f"- **{section}** ({data.get('confidence')}): {data.get('reasoning')}")
+    sufficiency_sections = sufficiency.get("sections", {})
+    if isinstance(sufficiency_sections, dict):
+        for section, data in sufficiency_sections.items():
+            if isinstance(data, dict):
+                confidence = data.get("confidence", "unknown")
+                reasoning = data.get("reasoning", "")
+            else:
+                confidence = data if isinstance(data, (str, int, float)) else "unknown"
+                reasoning = ""
+            lines.append(f"- **{section}** ({confidence}): {reasoning}")
 
     generated_sections = state.get("generated_sections", [])
     removed_claims = [
         (section.get("section_name", "Section"), claim)
         for section in generated_sections
         if isinstance(section, dict)
-        for claim in section.get("removed_claims", [])
+        for claim in (section.get("removed_claims") or [])
     ]
     under_evidenced = [
         section.get("section_name", "Section")
@@ -55,6 +69,10 @@ def build_completion_guide_text(state: dict) -> str:
         lines.append("No flagged items! The pipeline ran smoothly.")
     else:
         for idx, flag in enumerate(flags, 1):
+            if not isinstance(flag, dict):
+                lines.append(f"### Issue {idx}")
+                lines.append(f"**Problem:** {flag}")
+                continue
             lines.append(f"### Issue {idx} (from {flag.get('node')})")
             lines.append(f"**Problem:** {flag.get('issue')}")
             lines.append(f"**Action Required:** {flag.get('action_required')}")
@@ -64,8 +82,12 @@ def build_completion_guide_text(state: dict) -> str:
     coverage_score = cv_res.get("coverage_score")
     coverage_label = f"{coverage_score:.0%}" if isinstance(coverage_score, (int, float)) else "unknown"
     lines.append(f"- **Citation Grounding:** {coverage_label} coverage")
-    lines.append(f"- **Writing Quality:** {sc_res.get('overall_score', 0)}/10")
-    lines.append(f"- **Overall Pipeline QA:** {qa_res.get('overall_score', 0)}/10")
+    writing_score = sc_res.get("overall_score")
+    qa_score = qa_res.get("overall_score")
+    writing_label = f"{writing_score:g}" if isinstance(writing_score, (int, float)) else "unknown"
+    qa_label = f"{qa_score:g}" if isinstance(qa_score, (int, float)) else "unknown"
+    lines.append(f"- **Writing Quality:** {writing_label}/10")
+    lines.append(f"- **Overall Pipeline QA:** {qa_label}/10")
     lines.append("")
     lines.append(f"**Final Summary:** {qa_res.get('summary', '')}")
 

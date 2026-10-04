@@ -15,6 +15,7 @@ from services.agents.proposal_graph import run_proposal_draft_stream
 from services import request_context, tracking
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+TASK_RESULT_TYPES = {"summarization": "summary", "literature_review": "review"}
 
 
 async def _run_tracked_agent(user_id: str, title: str, agent_type: str, paper_ids: list[str], run):
@@ -27,7 +28,7 @@ async def _run_tracked_agent(user_id: str, title: str, agent_type: str, paper_id
         tracking.save_task_result(
             task_id=task_id,
             user_id=user_id,
-            type_=agent_type,
+            type_=TASK_RESULT_TYPES.get(agent_type, agent_type),
             title=title,
             content=json.dumps(result, ensure_ascii=False, default=str),
         )
@@ -266,7 +267,7 @@ async def cancel_agent_task(req: CancelRequest):
             sb.table("tasks").update({"status": "failed"}).eq("id", req.task_id).execute()
         else:
             sb.table("tasks").update({"status": "failed"}).eq("user_id", req.user_id).eq("status", "processing").execute()
-    except Exception as e:
+    except Exception:
         pass
 
     return {"status": "cancelled", "task_id": req.task_id, "user_id": req.user_id}
