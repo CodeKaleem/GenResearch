@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Literal
 from langgraph.graph import StateGraph, END
 
 from services.agents.state import ProposalState
@@ -40,6 +39,8 @@ logger = logging.getLogger(__name__)
 def route_sufficiency(state: dict) -> list[str] | str:
     """Route after sufficiency_eval."""
     report = state.get("sufficiency_report", {})
+    if report.get("source_count_override"):
+        return "scrape_permission"
     passed = report.get("overall_assessment") == "sufficient"
     feedback = "Material is insufficient. Missing background or sources."
     
@@ -124,7 +125,7 @@ def build_pipeline_graph() -> StateGraph:
     workflow.add_node("draft", draft_node)
     workflow.add_node("citation_verify", citation_verify_node)
     workflow.add_node("section_critic", section_critic_node)
-    workflow.add_node("merge_cd", merge_cd_node)
+    workflow.add_node("merge_cd", merge_cd_node, defer=True)
     workflow.add_node("final_qa", final_qa_node)
     workflow.add_node("output", output_node)
 
@@ -155,8 +156,7 @@ def build_pipeline_graph() -> StateGraph:
     workflow.add_conditional_edges("source_quality_eval", route_source_quality, ["ingestion"])
     
     # Fan in A & B
-    workflow.add_edge("outline_plan", "merge_ab")
-    workflow.add_edge("ingestion", "merge_ab")
+    workflow.add_edge(["outline_plan", "ingestion"], "merge_ab")
     
     workflow.add_edge("merge_ab", "context_build")
     workflow.add_edge("context_build", "user_approval")

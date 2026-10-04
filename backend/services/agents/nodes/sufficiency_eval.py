@@ -76,6 +76,7 @@ async def sufficiency_eval_node(state: dict) -> dict:
     # The LLM can be too lenient about coverage when the supplied source set
     # is small. Keep the override in the report itself because downstream
     # routing reads sufficiency_report.overall_assessment.
+    source_count_override = False
     if (
         report.get("overall_assessment") == "sufficient"
         and len(user_sources) < MIN_SOURCES_FOR_SUFFICIENT
@@ -88,6 +89,8 @@ async def sufficiency_eval_node(state: dict) -> dict:
             },
         )
         report["overall_assessment"] = "needs_more"
+        report["source_count_override"] = True
+        source_count_override = True
         report["summary"] = (
             f"Overridden: model judged material sufficient, but only "
             f"{len(user_sources)} source(s) were provided (minimum "
@@ -98,7 +101,9 @@ async def sufficiency_eval_node(state: dict) -> dict:
     # A5 Fix: compute retry/flag locally
     passed = report.get("overall_assessment") == "sufficient"
     feedback = "Material is insufficient. Missing background or sources."
-    decision = should_retry(state, NODE_NAME, passed, feedback)
+    decision = "proceed" if source_count_override else should_retry(
+        state, NODE_NAME, passed, feedback
+    )
 
     extra_state = {}
     if decision == "retry":
