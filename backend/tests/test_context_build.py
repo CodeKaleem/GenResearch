@@ -264,6 +264,73 @@ def test_draft_rebuilds_context_for_renamed_approved_section(monkeypatch):
     assert "Survey methods evidence from the updated section source." in prompts[0]
 
 
+def test_draft_passes_failed_claim_feedback_to_only_regenerated_section(monkeypatch):
+    prompts = []
+
+    async def fake_search(**kwargs):
+        return [{
+            "id": "chunk-1",
+            "source_id": "CR-001",
+            "title": "Results evidence",
+            "text": "Study evidence supports a measured outcome.",
+            "distance": 0.1,
+        }]
+
+    async def fake_llm(**kwargs):
+        prompts.append(kwargs["prompt"])
+        return "A grounded results sentence [CR-001]."
+
+    async def skip_verification(section, excerpt_map, session_id="", topic=""):
+        return section
+
+    monkeypatch.setattr(draft_module, "semantic_search_session", fake_search)
+    monkeypatch.setattr(draft_module, "call_llm", fake_llm)
+    monkeypatch.setattr(draft_module, "verify_section", skip_verification)
+    asyncio.run(
+        draft_module.draft_node(
+            {
+                "topic": "research outcomes",
+                "session_id": "retry-feedback",
+                "outline": {"sections": [{"name": "Results", "guidance": "Summarize outcomes."}]},
+                "citation_registry": [{
+                    "id": "CR-001",
+                    "title": "Results evidence",
+                    "evidence_level": "full_text",
+                }],
+                "section_contexts": [{
+                    "section_name": "Results",
+                    "section_goal": "Summarize outcomes.",
+                    "assigned_sources": [{
+                        "id": "CR-001",
+                        "title": "Results evidence",
+                        "evidence_level": "full_text",
+                    }],
+                    "claims": [],
+                    "narrative_prompt": "Use the study evidence.",
+                }],
+                "generated_sections": [{
+                    "section_name": "Results",
+                    "text": "An unsupported outcome claim.",
+                }],
+                "citation_verification_result": {
+                    "retry_sections": ["Results"],
+                    "unverified_claims": [{
+                        "claim": "An unsupported outcome claim.",
+                        "location": "Results, paragraph 1",
+                        "reason": "No support in cited evidence.",
+                    }],
+                },
+                "retry_feedback": {
+                    "citation_verification": "An unsupported outcome claim."
+                },
+            }
+        )
+    )
+
+    assert "An unsupported outcome claim." in prompts[0]
+    assert "Write ONE section (body only)" in prompts[0]
+
+
 def test_output_node_resolves_docx_citations_and_only_lists_used_sources(monkeypatch):
     captured = {}
     monkeypatch.setattr(

@@ -154,6 +154,20 @@ async def draft_node(state: dict) -> dict:
                         f"{evidence_by_source.get(source_id, '')} {chunk.get('text', '')}"
                     ).strip()
 
+            section_retry_feedback = ""
+            if section_name in retry_sections:
+                previous_text = str(previous.get("text", "")) if previous else ""
+                section_retry_feedback = "\n".join(
+                    f"Claim: {issue.get('claim', '')}\nReason: {issue.get('reason', '')}"
+                    for issue in state.get("citation_verification_result", {}).get("unverified_claims", [])
+                    if section_name.lower() in str(issue.get("location", "")).lower()
+                    or str(issue.get("claim", "")).lower() in previous_text.lower()
+                )
+                if not section_retry_feedback:
+                    section_retry_feedback = state.get("retry_feedback", {}).get(
+                        "citation_verification", ""
+                    )
+
             prompt = build_draft_prompt(
                 topic=topic,
                 outline={"sections": [section]},
@@ -161,6 +175,8 @@ async def draft_node(state: dict) -> dict:
                 rag_context=rag_context,
                 citation_style=citation_style,
                 approval_comment=state.get("approval_comment", ""),
+                section_mode=True,
+                retry_feedback=section_retry_feedback,
             )
 
             prompt += _format_section_context_block(section_context)

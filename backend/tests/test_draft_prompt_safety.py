@@ -49,3 +49,32 @@ def test_prompt_repeats_guardrails_after_the_exemplars():
         rag_context="thin context",
     )
     assert prompt.find("Final reminders") > prompt.find("EXEMPLAR 1")
+
+
+def test_section_mode_asks_for_one_body_and_keeps_safety_reminders():
+    prompt = build_draft_prompt(
+        topic="test topic",
+        outline={"sections": [{"name": "Results"}]},
+        citation_registry=[],
+        rag_context="evidence",
+        section_mode=True,
+    )
+
+    assert "Write ONE section (body only)" in prompt
+    assert "Now compose the complete research paper draft" not in prompt
+    assert "do not write a references/bibliography list" in prompt.lower()
+    assert "specific real-world drug" in prompt
+
+
+def test_section_mode_includes_targeted_retry_feedback():
+    prompt = build_draft_prompt(
+        topic="test topic",
+        outline={"sections": [{"name": "Results"}]},
+        citation_registry=[],
+        rag_context="evidence",
+        section_mode=True,
+        retry_feedback="Remove the unsupported outcome claim.",
+    )
+
+    assert "PREVIOUS VERIFICATION FEEDBACK" in prompt
+    assert "Remove the unsupported outcome claim." in prompt
