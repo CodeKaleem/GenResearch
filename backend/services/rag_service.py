@@ -51,6 +51,8 @@ async def semantic_search(
                 "paper_id": results["metadatas"][0][i].get("paper_id", ""),
                 "title": results["metadatas"][0][i].get("title", "Unknown"),
                 "chunk_index": results["metadatas"][0][i].get("chunk_index", 0),
+                "chunk_id": results["metadatas"][0][i].get("chunk_id", doc_id),
+                "page": results["metadatas"][0][i].get("page"),
                 "distance": results["distances"][0][i],
             })
 

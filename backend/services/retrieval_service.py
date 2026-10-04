@@ -1,6 +1,7 @@
 """Section-aware retrieval primitives for proposal composition."""
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 
 from models.schemas import RetrievedChunk
@@ -33,11 +34,22 @@ def reciprocal_rank_fusion(result_lists: list[list[dict]], k: int = 60) -> list[
 
 def _as_retrieved_chunk(hit: dict, score: float) -> RetrievedChunk:
     metadata = hit.get("metadata") or {}
+    authors = metadata.get("authors", [])
+    if isinstance(authors, str):
+        authors = [author.strip() for author in authors.split(";") if author.strip()]
+    elif not isinstance(authors, list):
+        authors = []
+    table_data = metadata.get("table_data")
+    if isinstance(table_data, str):
+        try:
+            table_data = json.loads(table_data)
+        except json.JSONDecodeError:
+            table_data = None
     return RetrievedChunk(
         chunk_id=hit.get("id", ""),
         paper_id=hit.get("paper_id") or metadata.get("paper_id", ""),
         title=hit.get("title") or metadata.get("title"),
-        authors=metadata.get("authors", []),
+        authors=authors,
         year=metadata.get("year"),
         section_heading=metadata.get("section_heading"),
         page=metadata.get("page"),
@@ -45,7 +57,7 @@ def _as_retrieved_chunk(hit: dict, score: float) -> RetrievedChunk:
         char_start=metadata.get("char_start"),
         char_end=metadata.get("char_end"),
         is_table=bool(metadata.get("is_table", False)),
-        table_data=metadata.get("table_data"),
+        table_data=table_data,
         text=hit.get("text", ""),
         score=score,
     )

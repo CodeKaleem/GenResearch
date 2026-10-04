@@ -3,6 +3,7 @@
 # Upload PDFs → Extract → Chunk → Embed → Store in ChromaDB
 # Sync metadata to Supabase papers table
 # ============================================================
+import asyncio
 import uuid
 import logging
 import os
@@ -117,7 +118,7 @@ async def upload_paper(
             raise ValueError("No text could be extracted from the PDF.")
 
         pages = await get_pdf_page_count(file_bytes)
-        parsed_blocks = parse_pdf(file_bytes)
+        parsed_blocks = await asyncio.to_thread(parse_pdf, file_bytes)
         parsed_blocks.extend(
             ParsedBlock(
                 text=f"Table {table['table']} on page {table['page']}: {table['rows']}",
@@ -126,7 +127,7 @@ async def upload_paper(
                 is_table=True,
                 table_data={"rows": table["rows"]},
             )
-            for table in extract_tables(file_bytes)
+            for table in await asyncio.to_thread(extract_tables, file_bytes)
         )
         structured_chunks = chunk_document(parsed_blocks, paper_id, paper_title)
         if structured_chunks:

@@ -2,9 +2,30 @@
 # GenResearch — ChromaDB Service
 # Store, retrieve, and delete paper chunks in ChromaDB
 # ============================================================
+import json
+
 from database.chroma_client import get_user_collection, get_session_collection
 from models.schemas import ChunkMetadata
 from services.embedder import embed_texts
+
+
+def _chroma_safe_metadata(meta: dict) -> dict:
+    """Convert structured metadata to Chroma-supported scalar values."""
+    safe: dict = {}
+    for key, value in meta.items():
+        if value is None:
+            continue
+        if isinstance(value, (list, dict)):
+            if not value:
+                continue
+            if isinstance(value, list) and all(isinstance(item, str) for item in value):
+                safe[key] = "; ".join(value)
+            else:
+                safe[key] = json.dumps(value, ensure_ascii=False)
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            safe[key] = value
+    return safe
 
 
 async def store_chunks(
@@ -29,14 +50,14 @@ async def store_chunks(
     # Build IDs, documents, metadata, and embeddings lists
     ids = [item.chunk_id for item in metadata] if metadata else [f"{paper_id}_chunk_{i}" for i in range(len(chunks))]
     metadatas = [
-        {
+        _chroma_safe_metadata({
             "paper_id": paper_id,
             "user_id": user_id,
             "chunk_index": i,
             "title": title,
             "collection": collection_name,
             **(metadata[i].model_dump(exclude_none=True) if metadata else {}),
-        }
+        })
         for i in range(len(chunks))
     ]
 
