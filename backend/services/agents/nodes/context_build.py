@@ -30,6 +30,7 @@ def _select_relevant_sources(section_name: str, guidance: str, registry: list[di
     rather than falling back to an arbitrary slice — the draft prompt
     already handles "no sources for this section" correctly.
     """
+    registry = [source for source in registry if source.get("evidence_level") != "none"]
     if not registry:
         return []
 
