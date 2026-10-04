@@ -37,6 +37,7 @@ async def output_node(state: dict) -> dict:
     result = {
         "status": "completed",
         "current_step": "output",
+        "draft_text": resolved_draft,
         "steps_log": [msg],
     }
     generated = state.get("generated_sections", [])
