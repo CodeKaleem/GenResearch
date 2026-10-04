@@ -134,8 +134,8 @@ async def context_build_node(state: dict) -> dict:
         section_name = section.get("name", f"Section {index + 1}")
         guidance = section.get("guidance") or section.get("goal") or f"Develop the {section_name} section with section-specific evidence and reasoning."
         is_synthesis = section_name.strip().lower() in _SYNTHESIS_SECTIONS
-        section_hits = []
-        if session_id and eligible_registry:
+        section_hits = global_hits if is_synthesis else []
+        if session_id and eligible_registry and not is_synthesis:
             section_hits = await semantic_search_session(
                 session_id=session_id,
                 query=f"{topic} {section_name} {guidance}",

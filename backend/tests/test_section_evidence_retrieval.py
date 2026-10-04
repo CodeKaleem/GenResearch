@@ -110,3 +110,41 @@ def test_synthesis_sections_receive_sources_with_retrievable_chunks(
         )
     )
     assert {hit["source_id"] for hit in restricted_hits} == {"CR-002"}
+
+
+def test_synthesis_sections_use_global_sources_and_other_sections_use_specific_query(monkeypatch):
+    calls = []
+    registry = [
+        {"id": "CR-001", "title": "Global source one", "evidence_level": "abstract"},
+        {"id": "CR-002", "title": "Global source two", "evidence_level": "abstract"},
+        {"id": "CR-003", "title": "Methods-specific source", "evidence_level": "abstract"},
+    ]
+
+    async def fake_search(session_id, query, top_k=5, source_ids=None):
+        calls.append(query)
+        source_ids_for_query = ["CR-001", "CR-002"] if query == "research topic" else ["CR-003"]
+        return [
+            {
+                "source_id": source_id,
+                "text": "Evidence for the requested section.",
+                "distance": index / 10,
+            }
+            for index, source_id in enumerate(source_ids_for_query)
+        ]
+
+    monkeypatch.setattr(context_module, "semantic_search_session", fake_search)
+    result = asyncio.run(
+        context_module.context_build_node({
+            "topic": "research topic",
+            "session_id": "synthesis-global",
+            "outline": {"sections": [
+                {"name": "Introduction", "guidance": "Set the context."},
+                {"name": "Methods", "guidance": "Describe the method."},
+            ]},
+            "citation_registry": registry,
+        })
+    )
+
+    assert {source["id"] for source in result["section_contexts"][0]["assigned_sources"]} == {"CR-001", "CR-002"}
+    assert {source["id"] for source in result["section_contexts"][1]["assigned_sources"]} == {"CR-003"}
+    assert "research topic Introduction Set the context." not in calls
