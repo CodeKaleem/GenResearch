@@ -1,14 +1,20 @@
 """Claim extraction and evidence verification for generated sections."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 import re
 from typing import Any
 
 from models.schemas import ExtractedClaim, GeneratedSection, VerificationResult
 from services.llm_service import call_llm
 from services import tracking
+from services.citation_formatting import ground_ungrounded_specifics
+from services.text_utils import split_sentences
+
+logger = logging.getLogger(__name__)
 
 
 EVIDENCE_TAG = re.compile(r"\[(E\d+|CR-\d{3})\]")
@@ -22,7 +28,7 @@ def _claim_id(section: str, text: str) -> str:
 def extract_claims_from_text(section_text: str, section_name: str) -> list[ExtractedClaim]:
     """Extract factual-looking sentences and their [E#] evidence tags."""
     claims: list[ExtractedClaim] = []
-    for sentence in re.split(r"(?<=[.!?])\s+", section_text.strip()):
+    for sentence in split_sentences(section_text.strip()):
         sentence = sentence.strip()
         if not sentence or len(sentence.split()) < 4:
             continue
@@ -104,10 +110,35 @@ async def verify_section(
     section: GeneratedSection,
     excerpt_map: dict[str, str],
     session_id: str = "",
+    topic: str = "",
 ) -> GeneratedSection:
-    """Verify all claims and remove/correct unsupported generated sentences."""
-    claims = extract_claims_from_text(section.text, section.section_name)
-    results = [await verify_claim(claim, excerpt_map) for claim in claims]
+    """Ground and verify claims; generic uncited prose is marked, unsupported specifics are removed."""
+    grounding = ground_ungrounded_specifics(
+        section.text,
+        excerpt_map,
+        set(excerpt_map),
+        topic,
+    )
+    claims = extract_claims_from_text(grounding.text, section.section_name)
+    semaphore = asyncio.Semaphore(3)
+
+    async def safely_verify(claim: ExtractedClaim) -> VerificationResult:
+        async with semaphore:
+            try:
+                return await verify_claim(claim, excerpt_map)
+            except Exception as error:
+                logger.warning(
+                    "claim_verification_failed",
+                    extra={"section": section.section_name, "claim_id": claim.claim_id},
+                    exc_info=True,
+                )
+                return VerificationResult(
+                    claim_id=claim.claim_id,
+                    verdict="unsupported",
+                    discrepancy=f"verifier error: {type(error).__name__}: {error}",
+                )
+
+    results = await asyncio.gather(*(safely_verify(claim) for claim in claims))
     for claim, result in zip(claims, results):
         tracking.save_generated_claim(
             session_id=session_id,
@@ -118,15 +149,29 @@ async def verify_section(
             discrepancy=result.discrepancy,
             corrected_text=result.corrected_text,
         )
-    text = section.text
+    text = grounding.text
+    removed_claims = list(grounding.removed_claims)
+    verifier_removed: list[str] = []
     for claim, result in zip(claims, results):
         if result.verdict == "unsupported" and not PLACEHOLDER.search(claim.text):
             text = text.replace(claim.text, "").strip()
+            verifier_removed.append(claim.text)
         elif result.verdict == "partial" and result.corrected_text:
             text = text.replace(claim.text, result.corrected_text)
+    if not text.strip() and (grounding.text.strip() or verifier_removed):
+        text = grounding.text
+        verifier_removed = []
+    removed_claims.extend(verifier_removed)
+    flagged_count = grounding.flagged_count + len(verifier_removed)
+    under_evidenced = grounding.preserved_empty_section or (
+        grounding.sentence_count > 0
+        and flagged_count / grounding.sentence_count > 0.5
+    )
     return section.model_copy(update={
         "text": text,
         "claims": claims,
         "verification": results,
+        "removed_claims": removed_claims,
+        "under_evidenced": under_evidenced,
         "verified": True,
     })

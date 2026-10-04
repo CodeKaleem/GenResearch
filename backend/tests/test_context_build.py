@@ -184,7 +184,7 @@ def test_draft_context_uses_registry_ids_and_only_section_sources(monkeypatch):
         prompts.append(kwargs["prompt"])
         return "Researchers analyzed 20 scans in 2022 [CR-001]."
 
-    async def skip_verification(section, excerpt_map, session_id=""):
+    async def skip_verification(section, excerpt_map, session_id="", topic=""):
         return section
 
     monkeypatch.setattr(draft_module, "semantic_search_session", fake_search)
@@ -232,7 +232,7 @@ def test_draft_rebuilds_context_for_renamed_approved_section(monkeypatch):
         prompts.append(kwargs["prompt"])
         return "The survey methods are described [CR-001]."
 
-    async def skip_verification(section, excerpt_map, session_id=""):
+    async def skip_verification(section, excerpt_map, session_id="", topic=""):
         return section
 
     monkeypatch.setattr(context_module, "semantic_search_session", fake_search)

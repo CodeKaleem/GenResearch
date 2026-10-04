@@ -55,6 +55,8 @@ class GeneratedSection(BaseModel):
     text: str
     claims: list[ExtractedClaim] = Field(default_factory=list)
     verification: list[VerificationResult] = Field(default_factory=list)
+    removed_claims: list[str] = Field(default_factory=list)
+    under_evidenced: bool = False
     verified: bool = False
 
 

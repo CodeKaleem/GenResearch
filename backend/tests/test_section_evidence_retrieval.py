@@ -85,7 +85,7 @@ def test_synthesis_sections_receive_sources_with_retrievable_chunks(
     async def fake_llm(**kwargs):
         return "The evidence supports synthesis [CR-001]."
 
-    async def capture_verification(section, excerpt_map, session_id=""):
+    async def capture_verification(section, excerpt_map, session_id="", topic=""):
         captured_evidence[section.section_name] = set(excerpt_map)
         return section
 

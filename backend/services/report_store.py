@@ -30,6 +30,25 @@ def build_completion_guide_text(state: dict) -> str:
     for section, data in sufficiency.get("sections", {}).items():
         lines.append(f"- **{section}** ({data.get('confidence')}): {data.get('reasoning')}")
 
+    generated_sections = state.get("generated_sections", [])
+    removed_claims = [
+        (section.get("section_name", "Section"), claim)
+        for section in generated_sections
+        if isinstance(section, dict)
+        for claim in section.get("removed_claims", [])
+    ]
+    under_evidenced = [
+        section.get("section_name", "Section")
+        for section in generated_sections
+        if isinstance(section, dict) and section.get("under_evidenced")
+    ]
+    if under_evidenced:
+        lines.extend(["", "## Under-evidenced Sections"])
+        lines.extend(f"- {name}: more than half of the section sentences required review." for name in under_evidenced)
+    if removed_claims:
+        lines.extend(["", "## Removed Unsupported Claims"])
+        lines.extend(f"- **{section}:** {claim}" for section, claim in removed_claims)
+
     lines.append("")
     lines.append("## 2. Action Items (Flags)")
     if not flags:

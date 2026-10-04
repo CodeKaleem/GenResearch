@@ -16,7 +16,6 @@ from services.agents.prompts.draft import DRAFT_SYSTEM, build_draft_prompt
 from models.schemas import GeneratedSection
 from services.citation_formatting import (
     flag_unverified_freeform_citations,
-    flag_ungrounded_specifics,
 )
 from services.agents.nodes.context_build import context_build_node
 from services.agents.verification_agent import verify_section
@@ -176,9 +175,6 @@ async def draft_node(state: dict) -> dict:
 
             generated = flag_unverified_freeform_citations(generated.strip())
             generated = _strip_duplicate_leading_heading(generated, section_name)
-            generated = flag_ungrounded_specifics(
-                generated, evidence_by_source, assigned_ids, topic
-            )
             verified_section = await verify_section(
                 GeneratedSection(
                     section_name=section_name,
@@ -187,6 +183,7 @@ async def draft_node(state: dict) -> dict:
                 ),
                 evidence_by_source,
                 session_id,
+                topic=topic,
             )
 
             section_payload = verified_section.model_dump()
@@ -194,9 +191,19 @@ async def draft_node(state: dict) -> dict:
             draft_sections.append(f"## {section_name}\n{verified_section.text}")
 
         draft = "\n\n".join(draft_sections)
+        flagged_items = [
+            {
+                "node": "draft",
+                "issue": f"Section {section['section_name']} is under-evidenced.",
+                "action_required": "Review the section and provide additional source material.",
+            }
+            for section in sections
+            if section.get("under_evidenced")
+        ]
         return {
             "draft_text": draft,
             "generated_sections": sections,
+            "flagged_items": flagged_items,
             "current_step": "draft",
             "status": "running",
             "steps_log": [
@@ -235,17 +242,22 @@ async def draft_node(state: dict) -> dict:
             evidence_by_source[source_id] = (
                 f"{evidence_by_source.get(source_id, '')} {chunk.get('text', '')}"
             ).strip()
-    draft = flag_ungrounded_specifics(draft, evidence_by_source, eligible_ids, topic)
     verified = await verify_section(
         GeneratedSection(section_name="Draft", text=draft),
         evidence_by_source,
         session_id,
+        topic=topic,
     )
     draft = verified.text
 
     return {
         "draft_text": draft,
         "generated_sections": [verified.model_dump()],
+        "flagged_items": ([{
+            "node": "draft",
+            "issue": "Draft section is under-evidenced.",
+            "action_required": "Review the section and provide additional source material.",
+        }] if verified.under_evidenced else []),
         "current_step": "draft",
         "status": "running",
         "steps_log": [
