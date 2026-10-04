@@ -181,6 +181,7 @@ async def call_llm_stream(
     )
 
     last_error: BaseException | None = None
+    yielded_content = False
     for spec in chain:
         payload = {
             "model": spec.model_id,
@@ -209,9 +210,12 @@ async def call_llm_stream(
                             chunk = json.loads(data)
                             content = chunk["choices"][0].get("delta", {}).get("content")
                             if content:
+                                yielded_content = True
                                 yield content
             return
         except Exception as error:
+            if yielded_content:
+                raise
             logger.warning(
                 "llm_stream_tier_failed_falling_back",
                 extra={"agent_role": agent_role, "tier": spec.key, "error": str(error)},

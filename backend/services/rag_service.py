@@ -1,16 +1,12 @@
 # ============================================================
 # GenResearch — RAG Service
-# Retrieval-Augmented Generation using ChromaDB + Mistral 7B
+# Retrieval-Augmented Generation using ChromaDB and the shared LLM client
 # ============================================================
-import httpx
+import json
 from config import settings
 from database.chroma_client import get_user_collection, get_session_collection
 from services.embedder import embed_single
-
-
-def _chat_completions_url() -> str:
-    base_url = settings.OLLAMA_BASE_URL.rstrip("/")
-    return f"{base_url}/chat/completions" if base_url.endswith("/v1") else f"{base_url}/v1/chat/completions"
+from services.llm_service import call_llm, call_llm_stream
 
 
 async def semantic_search(
@@ -105,7 +101,7 @@ async def semantic_search_session(
 
 def _build_rag_prompt(query: str, context_chunks: list[dict]) -> str:
     """
-    Build a prompt that instructs Mistral to answer based ONLY on the
+    Build a prompt that instructs the chat model to answer based ONLY on the
     retrieved document context.
     """
     context_parts: list[str] = []
@@ -150,7 +146,7 @@ async def generate_answer(
     Full RAG pipeline:
     1. Semantic search for relevant chunks
     2. Build context-augmented prompt
-    3. Generate answer via Mistral 7B (Ollama)
+    3. Generate an answer through the shared local LLM service
     4. Return answer + source references
     """
     # Step 1: Retrieve relevant chunks
@@ -160,31 +156,19 @@ async def generate_answer(
         return {
             "answer": "I don't have any documents to search through. Please upload some papers first, and then I can answer your questions based on their content.",
             "sources": [],
+            "chunks_used": 0,
             "model": settings.OLLAMA_MID_MODEL,
         }
 
     # Step 2: Build the RAG prompt
     prompt = _build_rag_prompt(query, chunks)
 
-    # Step 3: Call the remote Ollama OpenAI-compatible endpoint
-    url = _chat_completions_url()
-
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        response = await client.post(
-            url,
-            headers={"Authorization": "Bearer ollama"},
-            json={
-                "model": settings.OLLAMA_LLM_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-                "temperature": 0.3,
-                "max_tokens": 1024,
-            },
-        )
-        response.raise_for_status()
-        data = response.json()
-
-    answer = data["choices"][0]["message"]["content"].strip()
+    answer = await call_llm(
+        prompt,
+        agent_role="chat",
+        temperature=0.3,
+        max_tokens=1024,
+    )
 
     # Step 4: Build source references
     seen_papers: set[str] = set()
@@ -217,16 +201,16 @@ async def generate_answer_stream(
     Streaming version of the RAG pipeline.
     Yields chunks of text as they come from Mistral 7B.
     """
-    import json as json_lib
-
     # Step 1: Retrieve relevant chunks
     chunks = await semantic_search(user_id, query, top_k, paper_id)
 
     if not chunks:
-        yield json_lib.dumps({
-            "type": "answer",
+        yield json.dumps({"type": "sources", "sources": []}) + "\n"
+        yield json.dumps({
+            "type": "token",
             "content": "I don't have any documents to search through. Please upload some papers first.",
         }) + "\n"
+        yield json.dumps({"type": "done"}) + "\n"
         return
 
     # Yield source info first
@@ -242,41 +226,17 @@ async def generate_answer_stream(
                 "relevance": round(1 - chunk["distance"], 4),
             })
 
-    yield json_lib.dumps({"type": "sources", "sources": sources}) + "\n"
+    yield json.dumps({"type": "sources", "sources": sources}) + "\n"
 
     # Step 2: Build the RAG prompt
     prompt = _build_rag_prompt(query, chunks)
 
-    # Step 3: Stream from the remote Ollama OpenAI-compatible endpoint
-    url = _chat_completions_url()
-
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        async with client.stream(
-            "POST",
-            url,
-            headers={"Authorization": "Bearer ollama"},
-            json={
-                "model": settings.OLLAMA_LLM_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": True,
-                "temperature": 0.3,
-                "max_tokens": 1024,
-            },
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if line.startswith("data:"):
-                    try:
-                        data_line = line.removeprefix("data:").strip()
-                        if data_line == "[DONE]":
-                            yield json_lib.dumps({"type": "done"}) + "\n"
-                            return
-                        data = json_lib.loads(data_line)
-                        token = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                        if token:
-                            yield json_lib.dumps({
-                                "type": "token",
-                                "content": token,
-                            }) + "\n"
-                    except json_lib.JSONDecodeError:
-                        continue
+    async for token in call_llm_stream(
+        prompt,
+        agent_role="chat",
+        temperature=0.3,
+        max_tokens=1024,
+    ):
+        if token:
+            yield json.dumps({"type": "token", "content": token}) + "\n"
+    yield json.dumps({"type": "done"}) + "\n"
