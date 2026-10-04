@@ -7,6 +7,9 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+
+from services.text_utils import split_sentences
 
 CITATION_TAG = re.compile(r"\[(CR-\d{3})\]")
 _NUMBER = re.compile(
@@ -16,11 +19,6 @@ _NUMBER = re.compile(
 _ENTITY = re.compile(
     r"\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|[A-Z][a-z]+[A-Z][A-Za-z0-9]*|"
     r"[A-Z]{2,}[A-Z0-9-]*|[A-Z][A-Z0-9-]*\d[A-Z0-9-]*)\b"
-)
-_SENTENCE = re.compile(r"(?<=[.!?])\s+")
-_ABBREVIATION = re.compile(
-    r"\b(et al|e\.g|i\.e|etc|vs|cf|Dr|Mr|Mrs|Ms|Prof|Fig|No|U\.S|U\.K)\.",
-    re.IGNORECASE,
 )
 _DUPLICATE_CITATION_NEEDED = re.compile(
     r"\[CITATION NEEDED\](?:\s*\[CITATION NEEDED\])+"
@@ -38,14 +36,14 @@ def flag_unverified_freeform_citations(text: str) -> str:
     return _FREEFORM_CITATION.sub("[CITATION NEEDED]", text)
 
 
-def _split_sentences(text: str) -> list[str]:
-    protected = _ABBREVIATION.sub(lambda match: match.group(0).replace(".", "\u0000"), text)
-    return [part.replace("\u0000", ".") for part in _SENTENCE.split(protected)]
-
-
 def collapse_duplicate_citation_markers(text: str) -> str:
     """Collapse adjacent repeated citation-needed markers into one."""
     return _DUPLICATE_CITATION_NEEDED.sub("[CITATION NEEDED]", text)
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Compatibility wrapper for callers of the original formatter helper."""
+    return split_sentences(text)
 
 
 # Catches placeholder-template syntax the draft agent copies literally
@@ -73,6 +71,99 @@ def _normalize_grounding_text(text: str) -> str:
 _CITING_AUTHOR_PHRASE = re.compile(
     r"\b[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'\-]+(?:\s+(?:and|&)\s+[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)?\s+et al\.?",
 )
+_SINGLE_CAPITALIZED_ENTITY = re.compile(r"\b[A-Z][a-z][A-Za-z0-9-]{3,}\b")
+_TERMINAL_PUNCTUATION = re.compile(r"([.!?]+[\"'’”\)\]]*)$")
+_TRAILING_MARKER = re.compile(r"([.!?])\s+(\[CITATION NEEDED\])(?=\s|$)")
+
+
+@dataclass(frozen=True)
+class GroundingResult:
+    text: str
+    removed_claims: list[str]
+    flagged_count: int
+    sentence_count: int
+    preserved_empty_section: bool = False
+
+
+def _entity_candidates(body: str) -> list[str]:
+    body = body.replace("[CITATION NEEDED]", "")
+    body = _CITING_AUTHOR_PHRASE.sub("", body)
+    first_word = re.search(r"\S+", body)
+    sentence_start = first_word.start() if first_word else -1
+    candidates = [
+        match.group(0)
+        for match in _ENTITY.finditer(body)
+        if match.start() != sentence_start
+    ]
+    candidates.extend(
+        match.group(0)
+        for match in _SINGLE_CAPITALIZED_ENTITY.finditer(body)
+        if match.start() != sentence_start
+    )
+    return candidates
+
+
+def _mark_before_terminal_punctuation(sentence: str) -> str:
+    sentence = re.sub(r"\s*\[CITATION NEEDED\]", "", sentence).rstrip()
+    match = _TERMINAL_PUNCTUATION.search(sentence)
+    if not match:
+        return f"{sentence.rstrip()} [CITATION NEEDED]"
+    body = sentence[:match.start()].rstrip()
+    return f"{body} [CITATION NEEDED]{match.group(1)}"
+
+
+def ground_ungrounded_specifics(
+    text: str,
+    evidence_by_source: dict[str, str],
+    valid_source_ids: set[str],
+    topic: str = "",
+) -> GroundingResult:
+    """Flag generic uncited prose and remove unsupported specifics lacking a valid source."""
+    text = _TRAILING_MARKER.sub(r" \2\1", text)
+    sentences = [sentence.strip() for sentence in split_sentences(text) if sentence.strip()]
+    checked_sentences: list[str] = []
+    removed_claims: list[str] = []
+    flagged_count = 0
+
+    for sentence in sentences:
+        citation_ids = set(CITATION_TAG.findall(sentence))
+        valid_ids = citation_ids & valid_source_ids
+        body = CITATION_TAG.sub("", sentence)
+        evidence = " ".join(evidence_by_source.get(cid, "") for cid in valid_ids)
+        allowed = _normalize_grounding_text(f"{evidence} {topic}")
+        specifics = _NUMBER.findall(body) + _entity_candidates(body)
+        unsupported_specifics = [
+            specific
+            for specific in dict.fromkeys(specifics)
+            if _normalize_grounding_text(specific) not in allowed
+        ]
+        needs_flag = (
+            not valid_ids
+            or bool(citation_ids - valid_source_ids)
+            or bool(unsupported_specifics)
+        )
+
+        if unsupported_specifics and not valid_ids:
+            removed_claims.append(sentence)
+            flagged_count += 1
+            continue
+        if needs_flag:
+            sentence = _mark_before_terminal_punctuation(sentence)
+            flagged_count += 1
+        checked_sentences.append(sentence)
+
+    preserved_empty = bool(sentences and not checked_sentences and removed_claims)
+    if preserved_empty:
+        checked_sentences = sentences
+        removed_claims = []
+
+    return GroundingResult(
+        text=collapse_duplicate_citation_markers(" ".join(checked_sentences)),
+        removed_claims=removed_claims,
+        flagged_count=flagged_count,
+        sentence_count=len(sentences),
+        preserved_empty_section=preserved_empty,
+    )
 
 
 def flag_ungrounded_specifics(
@@ -82,23 +173,9 @@ def flag_ungrounded_specifics(
     topic: str = "",
 ) -> str:
     """Flag sentences without valid citations or with unsupported specifics."""
-    checked_sentences = []
-    for sentence in _split_sentences(text):
-        citation_ids = set(CITATION_TAG.findall(sentence))
-        body = CITATION_TAG.sub("", sentence)
-        evidence = " ".join(evidence_by_source.get(cid, "") for cid in citation_ids)
-        allowed = _normalize_grounding_text(f"{evidence} {topic}")
-        entity_scan_body = _CITING_AUTHOR_PHRASE.sub("", body)
-        specifics = _NUMBER.findall(body) + _ENTITY.findall(entity_scan_body)
-        unsupported = any(
-            _normalize_grounding_text(specific) not in allowed
-            for specific in dict.fromkeys(specifics)
-        )
-        has_invalid_id = bool(citation_ids - valid_source_ids)
-        if (not citation_ids or has_invalid_id or unsupported) and "[CITATION NEEDED]" not in sentence:
-            sentence = f"{sentence.rstrip()} [CITATION NEEDED]"
-        checked_sentences.append(sentence)
-    return collapse_duplicate_citation_markers(" ".join(checked_sentences))
+    return ground_ungrounded_specifics(
+        text, evidence_by_source, valid_source_ids, topic
+    ).text
 
 # Matches common academic author-list formats: "Surname, F. M." units,
 # e.g. "Tay, Y., Dehghani, M., Bahri, D.".

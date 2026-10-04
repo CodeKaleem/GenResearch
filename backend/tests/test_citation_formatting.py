@@ -204,3 +204,32 @@ def test_reference_resolution_collapses_duplicate_markers():
     )
 
     assert resolved == "Claim [CITATION NEEDED]."
+
+
+def test_grounding_marker_is_inserted_before_terminal_period():
+    result = flag_ungrounded_specifics(
+        "A general statement without a citation.", {}, set()
+    )
+
+    assert result == "A general statement without a citation [CITATION NEEDED]."
+
+
+def test_et_al_author_attribution_is_not_flagged_as_an_entity():
+    result = flag_ungrounded_specifics(
+        "Smith et al. demonstrated this in skin cancer detection [CR-001].",
+        {"CR-001": "A dermatology image-classification study."},
+        {"CR-001"},
+        topic="AI in medicine",
+    )
+
+    assert "[CITATION NEEDED]" not in result
+
+
+def test_freeform_citation_at_sentence_start_gets_marker_at_sentence_end():
+    freeform = flag_unverified_freeform_citations(
+        "(Davies et al., 2020) reported an outcome."
+    )
+    result = flag_ungrounded_specifics(freeform, {}, set())
+
+    assert not result.startswith("[CITATION NEEDED]")
+    assert result.endswith("[CITATION NEEDED].")
