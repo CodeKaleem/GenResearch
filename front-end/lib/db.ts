@@ -77,6 +77,18 @@ export interface PlatformStats {
   total_citations: number;
 }
 
+export interface UserPreferences {
+  notifications?: {
+    taskComplete?: boolean;
+    weeklyReport?: boolean;
+    agentErrors?: boolean;
+    updates?: boolean;
+  };
+  defaultAgent?: string;
+  citationFormat?: string;
+  outputLanguage?: string;
+}
+
 // ── Auth Helpers ─────────────────────────────────────────────
 export async function getCurrentUserId(): Promise<string | null> {
   const { data: { user } } = await supabase.auth.getUser();
@@ -85,6 +97,32 @@ export async function getCurrentUserId(): Promise<string | null> {
 
 export async function updateLastSeen() {
   await supabase.rpc("update_last_seen");
+}
+
+export async function getUserPreferences(userId: string) {
+  const { data, error } = await supabase
+    .from("user_preferences")
+    .select("preferences")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return { data: (data?.preferences ?? {}) as UserPreferences, error };
+}
+
+export async function saveUserPreferences(userId: string, preferences: UserPreferences) {
+  return supabase
+    .from("user_preferences")
+    .upsert({ user_id: userId, preferences, updated_at: new Date().toISOString() }, { onConflict: "user_id" })
+    .select("preferences")
+    .single();
+}
+
+export async function getUserApiCallsSince(userId: string, since: string) {
+  const { count, error } = await supabase
+    .from("api_cost_logs")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .gte("created_at", since);
+  return { count: count ?? 0, error };
 }
 
 // ── Public Stats (no auth needed — Home page) ───────────────

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { supabase } from "../../lib/supabase";
+import { updateLastSeen } from "../../lib/db";
 
 // ── Design tokens (mirrored from theme.ts) ─────────────────────
 const C = {
@@ -146,6 +147,7 @@ export default function Login({
       if (authError) {
         setError(authError.message);
       } else {
+        await updateLastSeen();
         onLoginSuccess?.();
       }
     } catch (err) {

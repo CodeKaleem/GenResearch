@@ -4,6 +4,8 @@ from services.citation_formatting import (
     format_in_text_citation,
     flag_unverified_freeform_citations,
     flag_ungrounded_specifics,
+    _split_sentences,
+    collapse_duplicate_citation_markers,
     resolve_and_append_references,
     resolve_in_text_citations,
 )
@@ -155,3 +157,50 @@ def test_sources_without_evidence_are_not_resolved_or_listed():
 
     assert "(citation needed)" in resolved
     assert "Empty source" not in resolved
+
+
+def test_sentence_splitter_preserves_et_al_and_other_abbreviations():
+    parts = _split_sentences(
+        "Smith et al. demonstrated X. This is also common in the U.S. today."
+    )
+
+    assert parts == [
+        "Smith et al. demonstrated X.",
+        "This is also common in the U.S. today.",
+    ]
+
+
+def test_citing_author_phrase_does_not_trigger_entity_gate():
+    result = flag_ungrounded_specifics(
+        "Smith et al. demonstrated this in skin cancer detection [CR-001].",
+        {"CR-001": "A study on dermatology image classification using convolutional networks."},
+        {"CR-001"},
+        topic="AI in medicine",
+    )
+
+    assert "[CITATION NEEDED]" not in result
+
+
+def test_unsupported_numbers_remain_flagged_with_valid_citation():
+    result = flag_ungrounded_specifics(
+        "The study reported 92% improvement [CR-001].",
+        {"CR-001": "The study reported 60 percent improvement."},
+        {"CR-001"},
+    )
+
+    assert "[CITATION NEEDED]" in result
+
+
+def test_duplicate_citation_needed_markers_collapse():
+    spam = "Claim [CITATION NEEDED] [CITATION NEEDED] [CITATION NEEDED]."
+
+    assert collapse_duplicate_citation_markers(spam) == "Claim [CITATION NEEDED]."
+    assert collapse_duplicate_citation_markers("Claim [CITATION NEEDED].") == "Claim [CITATION NEEDED]."
+
+
+def test_reference_resolution_collapses_duplicate_markers():
+    resolved = resolve_and_append_references(
+        "Claim [CITATION NEEDED] [CITATION NEEDED].", citation_registry=[]
+    )
+
+    assert resolved == "Claim [CITATION NEEDED]."

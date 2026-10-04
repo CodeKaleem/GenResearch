@@ -2,7 +2,19 @@
 
 import { useState, useEffect } from "react";
 import { C, sectionLabel, headingStyle, bodyText, cardBase } from "./theme";
-import { getProfile, updateProfile, getCurrentUserId, subscribeToPapers, subscribeToTasks, type Profile, type Paper, type Task } from "../../lib/db";
+import {
+  getProfile,
+  updateProfile,
+  getCurrentUserId,
+  getUserPreferences,
+  saveUserPreferences,
+  getUserApiCallsSince,
+  subscribeToPapers,
+  subscribeToTasks,
+  type Profile,
+  type Paper,
+  type Task,
+} from "../../lib/db";
 
 function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
@@ -27,9 +39,12 @@ function SettingRow({ label, desc, children }: { label: string; desc: string; ch
 export default function Settings() {
   const [notifications, setNotifications] = useState({ taskComplete: true, weeklyReport: true, agentErrors: true, updates: false });
   const [defaultAgent, setDefaultAgent] = useState("summarization");
+  const [citationFormat, setCitationFormat] = useState("APA");
+  const [outputLanguage, setOutputLanguage] = useState("English");
   const [user, setUser] = useState<Profile | null>(null);
   const [papers, setPapers] = useState<Paper[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [apiCalls, setApiCalls] = useState(0);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
 
@@ -45,6 +60,21 @@ export default function Settings() {
       
       const { data } = await getProfile(userId);
       if (data) setUser(data);
+
+      const [{ data: preferences }, { count }] = await Promise.all([
+        getUserPreferences(userId),
+        getUserApiCallsSince(
+          userId,
+          new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString(),
+        ),
+      ]);
+      if (preferences.notifications) {
+        setNotifications(current => ({ ...current, ...preferences.notifications }));
+      }
+      if (preferences.defaultAgent) setDefaultAgent(preferences.defaultAgent);
+      if (preferences.citationFormat) setCitationFormat(preferences.citationFormat);
+      if (preferences.outputLanguage) setOutputLanguage(preferences.outputLanguage);
+      setApiCalls(count);
 
       unsubPapers = subscribeToPapers(userId, setPapers);
       unsubTasks = subscribeToTasks(userId, setTasks);
@@ -90,6 +120,19 @@ export default function Settings() {
       setUser(prev => prev ? { ...prev, full_name: nameInput || prev.full_name, institution: instInput || prev.institution } : prev);
       showToast("Profile saved successfully!");
     }
+  };
+
+  const handleSavePreferences = async () => {
+    if (!user) return;
+    setSaving(true);
+    const { error } = await saveUserPreferences(user.id, {
+      notifications,
+      defaultAgent,
+      citationFormat,
+      outputLanguage,
+    });
+    setSaving(false);
+    showToast(error ? `Failed to save preferences: ${error.message}` : "Preferences saved successfully!");
   };
 
   return (
@@ -141,12 +184,12 @@ export default function Settings() {
               </select>
             </SettingRow>
             <SettingRow label="Citation Format" desc="Default format for generated citations">
-              <select defaultValue="APA" style={{ padding: "8px 14px", border: `1.5px solid ${C.border}`, borderRadius: 3, background: C.white, fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, color: C.inkDark, outline: "none", cursor: "pointer" }}>
+              <select value={citationFormat} onChange={e => setCitationFormat(e.target.value)} style={{ padding: "8px 14px", border: `1.5px solid ${C.border}`, borderRadius: 3, background: C.white, fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, color: C.inkDark, outline: "none", cursor: "pointer" }}>
                 <option>APA</option><option>MLA</option><option>IEEE</option><option>Chicago</option>
               </select>
             </SettingRow>
             <SettingRow label="Output Language" desc="Language for generated research outputs">
-              <select defaultValue="English" style={{ padding: "8px 14px", border: `1.5px solid ${C.border}`, borderRadius: 3, background: C.white, fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, color: C.inkDark, outline: "none", cursor: "pointer" }}>
+              <select value={outputLanguage} onChange={e => setOutputLanguage(e.target.value)} style={{ padding: "8px 14px", border: `1.5px solid ${C.border}`, borderRadius: 3, background: C.white, fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13, color: C.inkDark, outline: "none", cursor: "pointer" }}>
                 <option>English</option><option>Urdu</option>
               </select>
             </SettingRow>
@@ -167,6 +210,9 @@ export default function Settings() {
             <SettingRow label="Product Updates" desc="News about new features and improvements">
               <Toggle on={notifications.updates} onToggle={() => setNotifications(n => ({ ...n, updates: !n.updates }))} />
             </SettingRow>
+            <button className="btn-ink" style={{ marginTop: 18, padding: "9px 24px", fontSize: 11.5 }} onClick={handleSavePreferences} disabled={saving}>
+              {saving ? "Saving…" : "Save Preferences"}
+            </button>
           </div>
         </div>
 
@@ -185,13 +231,11 @@ export default function Settings() {
                 const now = new Date();
                 return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
               }).length;
-              const estimatedApi = tasks.reduce((acc, t) => acc + (t.status === "completed" ? Math.floor(Math.random() * 20) + 10 : 0), 0);
-
               const statsItems = [
-                { l: "Papers Stored", v: papers.length.toString(), m: "of 100" },
+                { l: "Papers Stored", v: papers.length.toString(), m: "of 20" },
                 { l: "Storage Used", v: formatBytes(totalBytes), m: "of 5 GB" },
                 { l: "Tasks This Month", v: thisMonthTasks.toString(), m: "of 50" },
-                { l: "API Calls (Est.)", v: estimatedApi.toLocaleString(), m: "of 5,000" }
+                { l: "API Calls This Month", v: apiCalls.toLocaleString(), m: "recorded" }
               ];
 
               return statsItems.map(s => (

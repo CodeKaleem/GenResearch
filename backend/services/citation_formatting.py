@@ -18,6 +18,13 @@ _ENTITY = re.compile(
     r"[A-Z]{2,}[A-Z0-9-]*|[A-Z][A-Z0-9-]*\d[A-Z0-9-]*)\b"
 )
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
+_ABBREVIATION = re.compile(
+    r"\b(et al|e\.g|i\.e|etc|vs|cf|Dr|Mr|Mrs|Ms|Prof|Fig|No|U\.S|U\.K)\.",
+    re.IGNORECASE,
+)
+_DUPLICATE_CITATION_NEEDED = re.compile(
+    r"\[CITATION NEEDED\](?:\s*\[CITATION NEEDED\])+"
+)
 
 _FREEFORM_CITATION = re.compile(
     r"\(\s*[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'\-]+"
@@ -29,6 +36,16 @@ _FREEFORM_CITATION = re.compile(
 def flag_unverified_freeform_citations(text: str) -> str:
     """Replace author/year citations that cannot be checked against the registry."""
     return _FREEFORM_CITATION.sub("[CITATION NEEDED]", text)
+
+
+def _split_sentences(text: str) -> list[str]:
+    protected = _ABBREVIATION.sub(lambda match: match.group(0).replace(".", "\u0000"), text)
+    return [part.replace("\u0000", ".") for part in _SENTENCE.split(protected)]
+
+
+def collapse_duplicate_citation_markers(text: str) -> str:
+    """Collapse adjacent repeated citation-needed markers into one."""
+    return _DUPLICATE_CITATION_NEEDED.sub("[CITATION NEEDED]", text)
 
 
 # Catches placeholder-template syntax the draft agent copies literally
@@ -53,6 +70,11 @@ def _normalize_grounding_text(text: str) -> str:
     return " ".join(re.findall(r"\d+(?:[,.]\d+)*%|[a-z0-9]+", text.lower()))
 
 
+_CITING_AUTHOR_PHRASE = re.compile(
+    r"\b[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'\-]+(?:\s+(?:and|&)\s+[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)?\s+et al\.?",
+)
+
+
 def flag_ungrounded_specifics(
     text: str,
     evidence_by_source: dict[str, str],
@@ -61,12 +83,13 @@ def flag_ungrounded_specifics(
 ) -> str:
     """Flag sentences without valid citations or with unsupported specifics."""
     checked_sentences = []
-    for sentence in _SENTENCE.split(text):
+    for sentence in _split_sentences(text):
         citation_ids = set(CITATION_TAG.findall(sentence))
         body = CITATION_TAG.sub("", sentence)
         evidence = " ".join(evidence_by_source.get(cid, "") for cid in citation_ids)
         allowed = _normalize_grounding_text(f"{evidence} {topic}")
-        specifics = _NUMBER.findall(body) + _ENTITY.findall(body)
+        entity_scan_body = _CITING_AUTHOR_PHRASE.sub("", body)
+        specifics = _NUMBER.findall(body) + _ENTITY.findall(entity_scan_body)
         unsupported = any(
             _normalize_grounding_text(specific) not in allowed
             for specific in dict.fromkeys(specifics)
@@ -75,7 +98,7 @@ def flag_ungrounded_specifics(
         if (not citation_ids or has_invalid_id or unsupported) and "[CITATION NEEDED]" not in sentence:
             sentence = f"{sentence.rstrip()} [CITATION NEEDED]"
         checked_sentences.append(sentence)
-    return " ".join(checked_sentences)
+    return collapse_duplicate_citation_markers(" ".join(checked_sentences))
 
 # Matches common academic author-list formats: "Surname, F. M." units,
 # e.g. "Tay, Y., Dehghani, M., Bahri, D.".
@@ -192,6 +215,7 @@ def resolve_and_append_references(
     """Resolve in-text citation tags and append references for cited sources."""
     draft_text = flag_placeholder_template_syntax(draft_text)
     draft_text = flag_unverified_freeform_citations(draft_text)
+    draft_text = collapse_duplicate_citation_markers(draft_text)
     used_ids = set(CITATION_TAG.findall(draft_text))
     resolved = resolve_in_text_citations(draft_text, citation_registry)
     references = build_reference_list(citation_registry, used_ids=used_ids)
