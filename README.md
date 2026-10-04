@@ -14,6 +14,8 @@ The backend now includes the plan's typed research contracts and quality path:
 Install backend dependencies with `backend/.venv/bin/pip install -r backend/requirements.txt`.
 Set `OLLAMA_HEAVY_MODEL`, `OLLAMA_MID_MODEL`, and `OLLAMA_LIGHT_MODEL` in `backend/.env` when the locally pulled model names differ from the Qwen/Phi defaults. Apply `supabase/migrations/20260923_grounding_audit.sql` before running the verification audit path.
 
+The backend uses Ollama's native `/api/chat` endpoint. `OLLAMA_REQUEST_TIMEOUT` defaults to 600 seconds and `OLLAMA_JUDGE_CONTEXT` defaults to 8192 tokens. `OLLAMA_EMBED_PREFIXES=true` enables Nomic `search_document:` / `search_query:` prefixes; keep it `false` (the default) unless you re-index existing Chroma collections after enabling it.
+
 The current vector backend remains Chroma for compatibility with the existing application. Qdrant, a CPU cross-encoder reranker, and Docker-level isolation for generated chart code are production upgrade paths; the chart service already enforces an import/AST allowlist and process timeout for local development.
 
 ## Paper discovery

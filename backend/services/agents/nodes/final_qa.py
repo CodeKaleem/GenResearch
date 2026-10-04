@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 
+from config import settings
 from services.llm_service import call_llm
 from services.agents.prompts.final_qa import (
     FINAL_QA_SYSTEM, FINAL_QA_THRESHOLD, build_final_qa_prompt,
@@ -35,6 +36,7 @@ async def final_qa_node(state: dict) -> dict:
     raw = await call_llm(
         prompt=prompt, agent_role="final_qa",
         system=FINAL_QA_SYSTEM, temperature=0.2, max_tokens=2000,
+        context_limit=settings.OLLAMA_JUDGE_CONTEXT,
     )
 
     cleaned = raw.strip()

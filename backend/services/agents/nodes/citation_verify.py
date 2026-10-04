@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 
+from config import settings
 from services.llm_service import call_llm
 from services.agents.prompts.citation_verify import (
     CITATION_VERIFY_SYSTEM, CITATION_VERIFY_THRESHOLD, build_citation_verify_prompt,
@@ -33,6 +34,7 @@ async def citation_verify_node(state: dict) -> dict:
     raw = await call_llm(
         prompt=prompt, agent_role="citation_verification",
         system=CITATION_VERIFY_SYSTEM, temperature=0.1, max_tokens=2000,
+        context_limit=settings.OLLAMA_JUDGE_CONTEXT,
     )
 
     cleaned = raw.strip()

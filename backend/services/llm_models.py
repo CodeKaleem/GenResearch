@@ -13,6 +13,7 @@ class ModelSpec:
     num_thread: int
     num_gpu: int = 0
     num_ctx: int = 4096
+    think: bool | None = None
 
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
@@ -23,6 +24,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         num_thread=settings.OLLAMA_HEAVY_NUM_THREAD,
         num_gpu=settings.OLLAMA_HEAVY_NUM_GPU,
         num_ctx=settings.OLLAMA_HEAVY_CONTEXT,
+        think=False if settings.OLLAMA_HEAVY_MODEL == "qwen3:8b" else None,
     ),
     "mid": ModelSpec(
         "mid",
