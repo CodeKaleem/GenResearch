@@ -13,8 +13,13 @@ import re
 from services.llm_service import call_llm
 from services.rag_service import semantic_search_session
 from services.agents.prompts.draft import DRAFT_SYSTEM, build_draft_prompt
-from services.citation_formatting import flag_unverified_freeform_citations
+from models.schemas import GeneratedSection
+from services.citation_formatting import (
+    flag_unverified_freeform_citations,
+    flag_ungrounded_specifics,
+)
 from services.agents.nodes.context_build import _select_relevant_sources
+from services.agents.verification_agent import verify_section
 
 logger = logging.getLogger(__name__)
 
@@ -107,17 +112,24 @@ async def draft_node(state: dict) -> dict:
             seen_ids.add(cid)
             unique_chunks.append(c)
 
-    rag_context = "\n\n---\n\n".join(
-        f"[Source: {c.get('title', 'Unknown')}]\n{c.get('text', '')}"
-        for c in unique_chunks[:25]
-    )
-
     if outline.get("sections"):
         sections = []
         draft_sections: list[str] = []
+        previous_sections = {
+            item.get("section_name"): item
+            for item in state.get("generated_sections", [])
+        }
+        retry_sections = set(
+            state.get("citation_verification_result", {}).get("retry_sections", [])
+        )
 
         for section in outline.get("sections", []):
             section_name = section.get("name", "Section")
+            previous = previous_sections.get(section_name)
+            if retry_sections and section_name not in retry_sections and previous:
+                sections.append(previous)
+                draft_sections.append(f"## {section_name}\n{previous.get('text', '')}")
+                continue
             section_context = next(
                 (item for item in section_contexts if item.get("section_name") == section_name),
                 {
@@ -131,11 +143,33 @@ async def draft_node(state: dict) -> dict:
                     "narrative_prompt": f"Write the {section_name} section grounded in the research evidence.",
                 },
             )
+            assigned_sources = [
+                source for source in section_context.get("assigned_sources", [])
+                if source.get("evidence_level") != "none"
+            ]
+            assigned_ids = {source.get("id") for source in assigned_sources}
+            section_evidence = [
+                chunk for chunk in unique_chunks
+                if chunk.get("source_id") in assigned_ids
+            ]
+            source_titles = {source.get("id"): source.get("title", "Unknown") for source in assigned_sources}
+            rag_context = "\n\n---\n\n".join(
+                f"[{chunk.get('source_id')} | {source_titles.get(chunk.get('source_id'), chunk.get('title', 'Unknown'))}]\n"
+                f"{chunk.get('text', '')}"
+                for chunk in section_evidence
+            ) or "No retrieved evidence is available for this section."
+            evidence_by_source: dict[str, str] = {}
+            for chunk in section_evidence:
+                source_id = chunk.get("source_id")
+                if source_id:
+                    evidence_by_source[source_id] = (
+                        f"{evidence_by_source.get(source_id, '')} {chunk.get('text', '')}"
+                    ).strip()
 
             prompt = build_draft_prompt(
                 topic=topic,
                 outline={"sections": [section]},
-                citation_registry=registry,
+                citation_registry=assigned_sources,
                 rag_context=rag_context,
                 citation_style=citation_style,
                 approval_comment=state.get("approval_comment", ""),
@@ -153,14 +187,22 @@ async def draft_node(state: dict) -> dict:
 
             generated = flag_unverified_freeform_citations(generated.strip())
             generated = _strip_duplicate_leading_heading(generated, section_name)
+            generated = flag_ungrounded_specifics(
+                generated, evidence_by_source, assigned_ids, topic
+            )
+            verified_section = await verify_section(
+                GeneratedSection(
+                    section_name=section_name,
+                    text=generated,
+                    claims=section_context.get("claims", []),
+                ),
+                evidence_by_source,
+                session_id,
+            )
 
-            section_payload = {
-                "section_name": section_name,
-                "text": generated,
-                "claims": section_context.get("claims", []),
-            }
+            section_payload = verified_section.model_dump()
             sections.append(section_payload)
-            draft_sections.append(f"## {section_name}\n{generated}")
+            draft_sections.append(f"## {section_name}\n{verified_section.text}")
 
         draft = "\n\n".join(draft_sections)
         return {
@@ -173,8 +215,16 @@ async def draft_node(state: dict) -> dict:
             ],
         }
 
+    eligible_sources = [source for source in registry if source.get("evidence_level") != "none"]
+    eligible_ids = {source.get("id") for source in eligible_sources}
+    fallback_chunks = [chunk for chunk in unique_chunks if chunk.get("source_id") in eligible_ids]
+    source_titles = {source.get("id"): source.get("title", "Unknown") for source in eligible_sources}
+    rag_context = "\n\n---\n\n".join(
+        f"[{c.get('source_id')} | {source_titles.get(c.get('source_id'), c.get('title', 'Unknown'))}]\n{c.get('text', '')}"
+        for c in fallback_chunks[:25]
+    ) or "No retrieved evidence is available."
     prompt = build_draft_prompt(
-        topic=topic, outline=outline, citation_registry=registry,
+        topic=topic, outline=outline, citation_registry=eligible_sources,
         rag_context=rag_context, citation_style=citation_style,
         approval_comment=state.get("approval_comment", "")
     )
@@ -184,9 +234,24 @@ async def draft_node(state: dict) -> dict:
         temperature=0.4, max_tokens=4096,
     )
     draft = flag_unverified_freeform_citations(draft)
+    evidence_by_source: dict[str, str] = {}
+    for chunk in fallback_chunks:
+        source_id = chunk.get("source_id")
+        if source_id:
+            evidence_by_source[source_id] = (
+                f"{evidence_by_source.get(source_id, '')} {chunk.get('text', '')}"
+            ).strip()
+    draft = flag_ungrounded_specifics(draft, evidence_by_source, eligible_ids, topic)
+    verified = await verify_section(
+        GeneratedSection(section_name="Draft", text=draft),
+        evidence_by_source,
+        session_id,
+    )
+    draft = verified.text
 
     return {
         "draft_text": draft,
+        "generated_sections": [verified.model_dump()],
         "current_step": "draft",
         "status": "running",
         "steps_log": [
