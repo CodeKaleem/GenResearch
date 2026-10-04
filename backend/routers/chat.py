@@ -44,7 +44,7 @@ async def ask_question(req: AskRequest):
     """
     Ask a question about your uploaded documents.
     Uses semantic search (nomic-embed-text) to find relevant chunks,
-    then generates an answer using Mistral 7B.
+    then generates an answer using the configured local chat model.
     """
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
