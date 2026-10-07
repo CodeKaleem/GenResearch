@@ -8,8 +8,9 @@ import uuid
 import logging
 import os
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
+from config import settings
 from database.supabase_client import get_supabase
 from services.pdf_extractor import extract_text_from_pdf, get_pdf_page_count
 from services.chunker import chunk_text
@@ -58,10 +59,28 @@ def _save_pdf_file(user_id: str, paper_id: str, file_bytes: bytes) -> str:
     return str(file_path)
 
 
+async def _schedule_structure_extraction(user_id: str, paper_id: str) -> None:
+    """Run document structure extraction after upload but never let it alter upload success."""
+    if not settings.DOC_STRUCTURE_ON_UPLOAD:
+        return
+    try:
+        from services.doc_structure.pipeline import extract_structure, persist_structure
+
+        pdf_path = STORAGE_DIR / user_id / f"{paper_id}.pdf"
+        if not pdf_path.exists():
+            return
+        with pdf_path.open("rb") as fh:
+            pdf_bytes = fh.read()
+        structure = await asyncio.to_thread(extract_structure, pdf_bytes)
+        await persist_structure(user_id, paper_id, structure)
+    except Exception as exc:
+        logger.warning("post_upload_structure_extraction_failed", extra={"paper_id": paper_id, "error": str(exc)}, exc_info=True)
+
 
 # ── POST /papers/upload ──────────────────────────────────────
 @router.post("/upload")
 async def upload_paper(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user_id: str = Form(...),
     title: str = Form(""),
@@ -153,6 +172,9 @@ async def upload_paper(
             "pages": pages,
         }).eq("id", paper_id).execute()
 
+        if settings.DOC_STRUCTURE_ON_UPLOAD:
+            background_tasks.add_task(_schedule_structure_extraction, user_id, paper_id)
+
         return {
             "paper_id": paper_id,
             "title": paper_title,
@@ -175,6 +197,7 @@ async def upload_paper(
 # ── POST /papers/upload-batch ────────────────────────────────
 @router.post("/upload-batch")
 async def upload_batch(
+    background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     user_id: str = Form(...),
     authors: str = Form(""),
@@ -247,6 +270,9 @@ async def upload_batch(
                 "chunks": num_chunks,
                 "pages": pages,
             }).eq("id", paper_id).execute()
+
+            if settings.DOC_STRUCTURE_ON_UPLOAD:
+                background_tasks.add_task(_schedule_structure_extraction, user_id, paper_id)
 
             results.append({
                 "paper_id": paper_id,
