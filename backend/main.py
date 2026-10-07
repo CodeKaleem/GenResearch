@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from routers.papers import router as papers_router
 from routers.chat import router as chat_router
+from routers.doc_structure import router as doc_structure_router
 from routers.pipeline import router as pipeline_router
 from routers.reports import router as reports_router
 from routers.agent_tasks import router as agent_tasks_router
@@ -31,6 +32,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────
 app.include_router(papers_router)
 app.include_router(chat_router)
+app.include_router(doc_structure_router)
 app.include_router(pipeline_router)
 app.include_router(reports_router)
 app.include_router(agent_tasks_router)
