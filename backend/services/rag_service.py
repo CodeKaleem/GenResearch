@@ -3,8 +3,11 @@
 # Retrieval-Augmented Generation using ChromaDB and the shared LLM client
 # ============================================================
 import json
+import re
+
 from config import settings
 from database.chroma_client import get_user_collection, get_session_collection
+from database.supabase_client import get_supabase
 from services.embedder import embed_single
 from services.llm_service import call_llm, call_llm_stream
 
@@ -14,6 +17,7 @@ async def semantic_search(
     query: str,
     top_k: int = 5,
     paper_id: str | None = None,
+    exclude_references: bool = False,
 ) -> list[dict]:
     """
     Embed the user's query with nomic-embed-text, then query ChromaDB
@@ -40,17 +44,35 @@ async def semantic_search(
     hits: list[dict] = []
     if results and results["ids"] and results["ids"][0]:
         for i, doc_id in enumerate(results["ids"][0]):
-            hits.append({
+            metadata = results["metadatas"][0][i]
+            text = results["documents"][0][i]
+            paper_id_value = metadata.get("paper_id", "")
+            page_value = metadata.get("page")
+            item = {
                 "id": doc_id,
-                "text": results["documents"][0][i],
-                "metadata": results["metadatas"][0][i],
-                "paper_id": results["metadatas"][0][i].get("paper_id", ""),
-                "title": results["metadatas"][0][i].get("title", "Unknown"),
-                "chunk_index": results["metadatas"][0][i].get("chunk_index", 0),
-                "chunk_id": results["metadatas"][0][i].get("chunk_id", doc_id),
-                "page": results["metadatas"][0][i].get("page"),
+                "text": text,
+                "metadata": metadata,
+                "paper_id": paper_id_value,
+                "title": metadata.get("title", "Unknown"),
+                "chunk_index": metadata.get("chunk_index", 0),
+                "chunk_id": metadata.get("chunk_id", doc_id),
+                "page": page_value,
                 "distance": results["distances"][0][i],
-            })
+            }
+            if exclude_references and paper_id_value:
+                try:
+                    ref_start = None
+                    sb = get_supabase()
+                    ref_res = sb.table("paper_structure").select("references_start_page").eq("paper_id", paper_id_value).execute()
+                    if ref_res.data:
+                        ref_start = ref_res.data[0].get("references_start_page")
+                    if ref_start is not None and page_value is not None and int(page_value) >= int(ref_start):
+                        continue
+                    if re.search(r"(?m)^\s*\[(?:\d+)\]\s+|\b[A-Z][a-z]+,\s+[A-Z]\.?\s*[A-Z]?[A-Za-z\-]*\s*\(\d{4}\)", text):
+                        continue
+                except Exception:
+                    pass
+            hits.append(item)
 
     return hits
 
@@ -141,6 +163,7 @@ async def generate_answer(
     query: str,
     top_k: int = 5,
     paper_id: str | None = None,
+    exclude_references: bool = False,
 ) -> dict:
     """
     Full RAG pipeline:
@@ -150,7 +173,7 @@ async def generate_answer(
     4. Return answer + source references
     """
     # Step 1: Retrieve relevant chunks
-    chunks = await semantic_search(user_id, query, top_k, paper_id)
+    chunks = await semantic_search(user_id, query, top_k, paper_id, exclude_references=exclude_references)
 
     if not chunks:
         return {
@@ -196,13 +219,14 @@ async def generate_answer_stream(
     query: str,
     top_k: int = 5,
     paper_id: str | None = None,
+    exclude_references: bool = False,
 ):
     """
     Streaming version of the RAG pipeline.
     Yields chunks of text as they come from Mistral 7B.
     """
     # Step 1: Retrieve relevant chunks
-    chunks = await semantic_search(user_id, query, top_k, paper_id)
+    chunks = await semantic_search(user_id, query, top_k, paper_id, exclude_references=exclude_references)
 
     if not chunks:
         yield json.dumps({"type": "sources", "sources": []}) + "\n"
