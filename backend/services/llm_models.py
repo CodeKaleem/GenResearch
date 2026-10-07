@@ -47,6 +47,8 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
 
 ROLE_MODEL_CHAINS: dict[str, list[str]] = {
     "chat": ["mid", "light"],
+    "chat_map": ["mid", "light"],
+    "chat_reduce": ["mid", "light"],
     "topic_analysis": ["mid", "light"],
     "summarization": ["light", "mid"],
     "citation_extraction": ["mid", "light"],

@@ -44,6 +44,13 @@ class Settings:
     OLLAMA_MID_CONTEXT: int = int(os.getenv("OLLAMA_MID_CONTEXT", "8000"))
     OLLAMA_LIGHT_CONTEXT: int = int(os.getenv("OLLAMA_LIGHT_CONTEXT", "4000"))
 
+    # Document structure and chat routing
+    DOC_STRUCTURE_ON_UPLOAD: bool = os.getenv("DOC_STRUCTURE_ON_UPLOAD", "True").lower() in ("true", "1", "yes")
+    CHAT_INTENT_ROUTING: bool = os.getenv("CHAT_INTENT_ROUTING", "True").lower() in ("true", "1", "yes")
+    DOC_STRUCTURE_VERSION: str = os.getenv("DOC_STRUCTURE_VERSION", "1")
+    CHAT_MAP_MAX_CONCURRENCY: int = int(os.getenv("CHAT_MAP_MAX_CONCURRENCY", "2"))
+    CHAT_MAP_WINDOW_CHARS: int = int(os.getenv("CHAT_MAP_WINDOW_CHARS", str(max(2000, OLLAMA_MID_CONTEXT // 3))))
+
     # Supabase
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
