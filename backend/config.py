@@ -22,6 +22,13 @@ class Settings:
     OLLAMA_JUDGE_CONTEXT: int = int(os.getenv("OLLAMA_JUDGE_CONTEXT", "8192"))
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
     OLLAMA_EMBED_PREFIXES: bool = os.getenv("OLLAMA_EMBED_PREFIXES", "false").lower() in ("true", "1", "yes")
+    # How long Ollama keeps a model in memory after its last request. Without this
+    # Ollama's default (5 min) unloads models between questions and every chat
+    # pays a cold-load penalty.
+    OLLAMA_KEEP_ALIVE: str = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
+    # Per-read timeout for chat streaming. The generic 600s timeout means a stuck
+    # model blocks the user for 10 minutes before the fallback tier is tried.
+    OLLAMA_CHAT_READ_TIMEOUT: float = float(os.getenv("OLLAMA_CHAT_READ_TIMEOUT", "120"))
 
     # Heavy tier
     OLLAMA_HEAVY_MODEL: str = os.getenv("OLLAMA_HEAVY_MODEL", "qwen3:8b")
@@ -50,6 +57,14 @@ class Settings:
     DOC_STRUCTURE_VERSION: str = os.getenv("DOC_STRUCTURE_VERSION", "1")
     CHAT_MAP_MAX_CONCURRENCY: int = int(os.getenv("CHAT_MAP_MAX_CONCURRENCY", "2"))
     CHAT_MAP_WINDOW_CHARS: int = int(os.getenv("CHAT_MAP_WINDOW_CHARS", str(max(2000, OLLAMA_MID_CONTEXT // 3))))
+
+    # Chat retrieval quality
+    CHAT_TOP_K: int = int(os.getenv("CHAT_TOP_K", "8"))                    # floor for the UI's top_k
+    CHAT_BROAD_TOP_K: int = int(os.getenv("CHAT_BROAD_TOP_K", "12"))       # summary/gaps/contributions...
+    CHAT_FETCH_MULTIPLIER: int = int(os.getenv("CHAT_FETCH_MULTIPLIER", "3"))  # over-fetch before filtering references
+    CHAT_MAX_DISTANCE: float = float(os.getenv("CHAT_MAX_DISTANCE", "0.75"))   # cosine distance cutoff, 0 disables
+    CHAT_HISTORY_TURNS: int = int(os.getenv("CHAT_HISTORY_TURNS", "6"))
+    CHAT_CONTEXT_CHARS: int = int(os.getenv("CHAT_CONTEXT_CHARS", "10000"))    # evidence budget per prompt
 
     # Supabase
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")

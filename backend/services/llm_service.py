@@ -40,13 +40,20 @@ def _native_chat_url() -> str:
     return f"{_ollama_base_url()}/api/chat"
 
 
-def _request_timeout() -> httpx.Timeout:
+def _request_timeout(read: float | None = None) -> httpx.Timeout:
     return httpx.Timeout(
         connect=10.0,
-        read=settings.OLLAMA_REQUEST_TIMEOUT,
+        read=read if read is not None else settings.OLLAMA_REQUEST_TIMEOUT,
         write=30.0,
         pool=30.0,
     )
+
+
+def _read_timeout_for_role(agent_role: str) -> float | None:
+    """Interactive chat gets a tighter read timeout so fallback happens in minutes, not 10 min."""
+    if agent_role.startswith("chat") and agent_role != "chat_map":
+        return min(settings.OLLAMA_CHAT_READ_TIMEOUT, settings.OLLAMA_REQUEST_TIMEOUT)
+    return None
 
 
 def _request_payload(
@@ -58,18 +65,25 @@ def _request_payload(
     max_tokens: int,
     context_limit: int | None,
 ) -> dict:
+    options = {
+        "temperature": temperature,
+        "num_predict": max_tokens,
+        "num_ctx": context_limit or spec.num_ctx,
+    }
+    # A negative value means "let Ollama decide" (use the GPU when there is one).
+    # Hard-coding num_gpu=0 forces CPU inference even on a GPU host.
+    if spec.num_thread > 0:
+        options["num_thread"] = spec.num_thread
+    if spec.num_gpu >= 0:
+        options["num_gpu"] = spec.num_gpu
     payload = {
         "model": spec.model_id,
         "messages": messages,
         "stream": stream,
-        "options": {
-            "temperature": temperature,
-            "num_predict": max_tokens,
-            "num_ctx": context_limit or spec.num_ctx,
-            "num_thread": spec.num_thread,
-            "num_gpu": spec.num_gpu,
-        },
+        "options": options,
     }
+    if settings.OLLAMA_KEEP_ALIVE:
+        payload["keep_alive"] = settings.OLLAMA_KEEP_ALIVE
     if spec.think is not None:
         payload["think"] = spec.think
     return payload
@@ -144,6 +158,7 @@ async def _call_ollama_once(
     temperature: float,
     max_tokens: int,
     context_limit: int | None = None,
+    read_timeout: float | None = None,
 ) -> tuple[str, dict]:
     payload = {
         **_request_payload(
@@ -158,7 +173,7 @@ async def _call_ollama_once(
 
     async with _semaphore(spec):
         try:
-            async with httpx.AsyncClient(timeout=_request_timeout()) as client:
+            async with httpx.AsyncClient(timeout=_request_timeout(read_timeout)) as client:
                 response = await client.post(
                     _native_chat_url(),
                     json=payload,
@@ -183,6 +198,39 @@ async def _call_ollama_once(
                     f"Run: ollama pull {spec.model_id}"
                 ) from error
             raise
+
+
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _write_tracking(agent_role: str, model_id: str, prompt: str, usage: dict, latency_ms: int, user_id) -> None:
+    """Synchronous Supabase inserts; always run off the event loop."""
+    tokens_in = int(usage.get("prompt_eval_count") or 0)
+    tokens_out = int(usage.get("eval_count") or 0)
+    tracking.log_api_cost(
+        agent=agent_role,
+        model=model_id,
+        tokens_used=tokens_in + tokens_out,
+        user_id=user_id,
+    )
+    tracking.log_audit_event(
+        node_name=agent_role,
+        model_used=model_id,
+        prompt_hash=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        latency_ms=latency_ms,
+    )
+
+
+def _track_in_background(**kwargs) -> None:
+    """Fire-and-forget tracking so remote Supabase writes never delay or block an answer."""
+    try:
+        task = asyncio.get_running_loop().create_task(asyncio.to_thread(_write_tracking, **kwargs))
+    except RuntimeError:
+        return
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 async def call_llm(
@@ -225,7 +273,9 @@ async def call_llm(
                     "attempt_index": index,
                 },
             )
-            result, usage = await _call_ollama_once(spec, messages, temperature, max_tokens, context_limit)
+            read_timeout = _read_timeout_for_role(agent_role)
+            extra = {"read_timeout": read_timeout} if read_timeout is not None else {}
+            result, usage = await _call_ollama_once(spec, messages, temperature, max_tokens, context_limit, **extra)
             logger.info(
                 "llm_response",
                 extra={
@@ -234,20 +284,13 @@ async def call_llm(
                     "response_length": len(result),
                 },
             )
-            tracking.log_api_cost(
-                agent=agent_role,
-                model=spec.model_id,
-                tokens_used=int(usage.get("prompt_eval_count") or 0)
-                + int(usage.get("eval_count") or 0),
-                user_id=request_context.get_user_id(),
-            )
-            tracking.log_audit_event(
-                node_name=agent_role,
-                model_used=spec.model_id,
-                prompt_hash=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-                tokens_in=int(usage.get("prompt_eval_count") or 0),
-                tokens_out=int(usage.get("eval_count") or 0),
+            _track_in_background(
+                agent_role=agent_role,
+                model_id=spec.model_id,
+                prompt=prompt,
+                usage=usage,
                 latency_ms=int((time.perf_counter() - started_at) * 1000),
+                user_id=request_context.get_user_id(),
             )
             return result
         except (NonRetryableLLMError, RetryError) as error:
@@ -302,7 +345,7 @@ async def call_llm_stream(
         think_state: dict = {}
         try:
             async with _semaphore(spec):
-                async with httpx.AsyncClient(timeout=_request_timeout()) as client:
+                async with httpx.AsyncClient(timeout=_request_timeout(_read_timeout_for_role(agent_role))) as client:
                     async with client.stream(
                         "POST",
                         _native_chat_url(),
