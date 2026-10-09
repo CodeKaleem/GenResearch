@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from services import request_context, tracking
+
+# WARNING+ records are written to Supabase. Doing that inline blocked whichever
+# coroutine happened to log (e.g. every LLM fallback warning). Use one background thread.
+_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="supabase-log")
 
 _LEVEL_MAP = {
     logging.WARNING: "warn",
@@ -17,7 +22,8 @@ class SupabaseLogHandler(logging.Handler):
         if not level or record.name == "services.tracking":
             return
         try:
-            tracking.log_agent_event(
+            _executor.submit(
+                tracking.log_agent_event,
                 level=level,
                 message=record.getMessage(),
                 agent=record.name,

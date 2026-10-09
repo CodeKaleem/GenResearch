@@ -46,6 +46,7 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
                         if settings.OLLAMA_EMBED_PREFIXES
                         else text
                     ),
+                    "keep_alive": settings.OLLAMA_KEEP_ALIVE,
                 },
             )
             response.raise_for_status()
@@ -79,7 +80,7 @@ async def _embed_texts_with_prefix(texts: list[str], prefix: str) -> list[list[f
         async with semaphore:
             response = await client.post(
                 url,
-                json={"model": settings.OLLAMA_EMBED_MODEL, "prompt": text},
+                json={"model": settings.OLLAMA_EMBED_MODEL, "prompt": text, "keep_alive": settings.OLLAMA_KEEP_ALIVE},
             )
             response.raise_for_status()
             return response.json()["embedding"]
