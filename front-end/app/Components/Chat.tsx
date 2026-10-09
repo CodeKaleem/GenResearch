@@ -227,10 +227,17 @@ export default function Chat() {
     setIsLoading(true);
 
     try {
+      // Send the last few turns so follow-ups ("explain that more") can be resolved by the backend.
+      const history = activeSession.messages
+        .filter((m) => !m.isStreaming && m.content && !m.content.startsWith("Error:"))
+        .slice(-6)
+        .map((m) => ({ role: m.role, content: m.content.slice(0, 1200) }));
+
       const body: Record<string, unknown> = {
         user_id: userId,
         query,
-        top_k: 5,
+        top_k: 8,
+        history,
       };
       if (selectedPaper !== "all") {
         body.paper_id = selectedPaper;
@@ -282,6 +289,10 @@ export default function Chat() {
                 );
               } else if (data.type === "answer") {
                 fullContent = data.content;
+              } else if (data.type === "error") {
+                fullContent = fullContent
+                  ? `${fullContent}\n\n[${data.message}]`
+                  : `Error: ${data.message}`;
               }
             } catch {
               /* ignore stream parse error */
