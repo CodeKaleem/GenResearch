@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from database.supabase_client import get_supabase
 
 
@@ -8,9 +10,9 @@ async def handle_items_list(user_id: str, *, paper_id: str | None = None):
     query = sb.table("paper_items").select("*").eq("user_id", user_id)
     if paper_id:
         query = query.eq("paper_id", paper_id)
-    result = query.execute()
+    result = await asyncio.to_thread(query.execute)
     items = result.data or []
-    lines = [f"{item['kind']}: {item['label']} (p. {item['page']}) - {item['caption']}" for item in items]
+    lines = [f"{item.get('kind', 'item')}: {item.get('label') or ''} (p. {item.get('page', '?')}) - {item.get('caption') or ''}" for item in items]
     answer = "\n".join(lines) if lines else "No tables or figures were detected."
     return {
         "answer": answer,
