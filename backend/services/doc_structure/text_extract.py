@@ -40,19 +40,39 @@ def normalize_pdf_text(text: str) -> str:
 
 
 def _readable_blocks(page: fitz.Page) -> list[dict]:
-    blocks = page.get_text("blocks")
-    out: list[dict] = []
-    for block in blocks:
-        if block.get("type") != 0:
-            continue
-        lines = []
-        for line in block.get("lines", []):
-            span_text = "".join(span.get("text", "") for span in line.get("spans", []))
-            if span_text:
-                lines.append(span_text)
-        text = " ".join(lines).strip()
-        if text:
-            out.append({"x0": block.get("bbox", [0, 0, 0, 0])[0], "y0": block.get("bbox", [0, 0, 0, 0])[1], "text": text})
+    # Try dict representation first
+    raw_dict = page.get_text("dict")
+    raw_blocks = raw_dict.get("blocks", []) if isinstance(raw_dict, dict) else []
+    if raw_blocks:
+        out: list[dict] = []
+        for block in raw_blocks:
+            if not isinstance(block, dict) or block.get("type", 0) != 0:
+                continue
+            lines = []
+            for line in block.get("lines", []):
+                span_text = "".join(span.get("text", "") for span in line.get("spans", []))
+                if span_text.strip():
+                    lines.append(span_text)
+            text = "\n".join(lines).strip()
+            if text:
+                bbox = block.get("bbox", [0, 0, 0, 0])
+                out.append({"x0": bbox[0], "y0": bbox[1], "text": text})
+        if out:
+            return out
+
+    # Fallback to tuple representation from page.get_text("blocks")
+    tuple_blocks = page.get_text("blocks")
+    out = []
+    for b in tuple_blocks:
+        if isinstance(b, (tuple, list)) and len(b) >= 7:
+            x0, y0, x1, y1, text, bno, btype = b[:7]
+            if btype == 0 and text and text.strip():
+                out.append({"x0": x0, "y0": y0, "text": text.strip()})
+        elif isinstance(b, dict) and b.get("type", 0) == 0:
+            text = b.get("text", "").strip()
+            if text:
+                bbox = b.get("bbox", [0, 0, 0, 0])
+                out.append({"x0": bbox[0], "y0": bbox[1], "text": text})
     return out
 
 
@@ -66,12 +86,12 @@ def _cluster_blocks(blocks: Iterable[dict], page_w: float) -> list[str]:
         for idx, (center, lines) in enumerate(column_centers):
             if abs(x - center) < max(60, page_w * 0.12):
                 lines.append(item["text"])
-                column_centers[idx] = (sum([b for b, _ in []]) if False else center, lines)
+                column_centers[idx] = (center, lines)
                 placed = True
                 break
         if not placed:
             column_centers.append((x, [item["text"]]))
-    for _, lines in column_centers:
+    for _, lines in sorted(column_centers, key=lambda c: c[0]):
         clusters.append("\n".join(lines))
     return clusters
 
