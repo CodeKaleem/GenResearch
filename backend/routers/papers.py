@@ -40,12 +40,21 @@ def _format_file_size(size_bytes: int) -> str:
 
 def _check_user_quota(sb, user_id: str):
     """Enforce user quota: max 20 papers."""
-    res = sb.table("papers").select("id").eq("user_id", user_id).execute()
-    papers = res.data or []
-    if len(papers) >= MAX_PAPERS_PER_USER:
+    try:
+        res = sb.table("papers").select("id").eq("user_id", user_id).execute()
+        papers = res.data or []
+        if len(papers) >= MAX_PAPERS_PER_USER:
+            raise HTTPException(
+                status_code=400,
+                detail=f"User quota exceeded: Maximum {MAX_PAPERS_PER_USER} papers allowed per account.",
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to check user quota: %s", exc)
         raise HTTPException(
-            status_code=400,
-            detail=f"User quota exceeded: Maximum {MAX_PAPERS_PER_USER} papers allowed per account.",
+            status_code=500,
+            detail=f"Database error during quota check: {exc}",
         )
 
 
