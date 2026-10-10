@@ -4,8 +4,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable
 
-_HEADING_RE = re.compile(r"(?:^|\n)\s*(?:References|Bibliography|Works Cited|Literature Cited|REFERENCES)\s*$", re.IGNORECASE)
-_REFERENCE_MARKER_RE = re.compile(r"(?m)^\s*\[(\d+)\]\s+|")
+_HEADING_RE = re.compile(r"(?im)(?:^|\n)\s*(?:References|Bibliography|Works Cited|Literature Cited|REFERENCES)\s*$")
+_REFERENCE_MARKER_RE = re.compile(r"(?m)^\s*(?:\[(\d+)\]|(\d+)\.|\((\d+)\))\s+")
 
 
 @dataclass
@@ -33,8 +33,8 @@ class ReferenceBundle:
 
 
 def _normalize_reference_text(text: str) -> str:
-    text = text.replace("\u00ad", "")
-    text = re.sub(r"(?<=[A-Za-z])-\n(?=[a-z])", "", text)
+    text = text.replace("\u00ad", "").replace("\u200b", "").replace("\ufeff", "")
+    text = re.sub(r"(?<=[A-Za-z])-\n(?=[A-Za-z])", "", text)
     text = re.sub(r"\n+", "\n", text)
     return text.strip()
 
@@ -43,12 +43,14 @@ def _find_reference_heading(text: str) -> tuple[int, str] | None:
     matches = list(_HEADING_RE.finditer(text))
     if not matches:
         return None
+    for heading in reversed(matches):
+        start = heading.end()
+        window = text[start:start + 800]
+        if re.search(r"(?i)(\[\s*1\s*\]|\b1\.\s+|\(1\)|[A-Z][a-z]+(?:,\s+[A-Z]\.|\s+[A-Z]\.)\s*.*?\(\d{4}\))", window):
+            return heading.start(), text[start:]
+    # Fallback to the last match even if window is short
     heading = matches[-1]
-    start = heading.end()
-    window = text[start:start + 500]
-    if not re.search(r"(?i)(\[\s*1\s*\]|\b1\.|\(1\)|[A-Z][a-z]+,\s+[A-Z]\.?\s*[A-Z]?[A-Za-z\-]*\s*\(\d{4}\))", window):
-        return None
-    return heading.start(), text[start:]
+    return heading.start(), text[heading.end():]
 
 
 def _extract_ids_from_text(text: str) -> list[int]:
@@ -68,14 +70,18 @@ def _coerce_year(raw: str) -> int | None:
 
 
 def _coerce_doi(raw: str) -> str | None:
-    match = re.search(r"10\.\d{4,9}/\S+", raw, flags=re.IGNORECASE)
+    # Unwrap newlines that break up DOIs across lines in PDFs (with optional indent)
+    cleaned = re.sub(r"(10\.\d{4,9}/[^\s\n]*)\n\s*([^\s\n]+)", r"\1\2", raw)
+    cleaned = cleaned.replace("\u200b", "").replace(" ", "")
+    match = re.search(r"10\.\d{4,9}/[^\s,;\"'<>]+", cleaned, flags=re.IGNORECASE)
     if not match:
         return None
-    return match.group(0)
+    return match.group(0).rstrip(".")
 
 
 def _coerce_arxiv(raw: str) -> str | None:
-    match = re.search(r"arXiv:(\d{4}\.\d{4,5})", raw, flags=re.IGNORECASE)
+    cleaned = raw.replace("\u200b", "")
+    match = re.search(r"arXiv:\s*(\d{4}\.\d{4,5}(?:v\d+)?)", cleaned, flags=re.IGNORECASE)
     if not match:
         return None
     return f"arXiv:{match.group(1)}"
@@ -89,9 +95,10 @@ def _strip_ref_noise(raw: str) -> str:
 def _parse_reference_entry(raw: str) -> ReferenceEntry:
     cleaned = _normalize_reference_text(raw)
     entry = ReferenceEntry(raw=cleaned)
-    match = re.search(r"^\s*\[(\d+)\]\s*", cleaned)
+    match = re.search(r"^\s*(?:\[(\d+)\]|(\d+)\.|\((\d+)\))\s*", cleaned)
     if match:
-        entry.ref_number = int(match.group(1))
+        num_str = match.group(1) or match.group(2) or match.group(3)
+        entry.ref_number = int(num_str)
         cleaned = cleaned[match.end():].lstrip()
     entry.year = _coerce_year(cleaned)
     entry.doi = _coerce_doi(cleaned)
@@ -127,14 +134,33 @@ def _parse_reference_entry(raw: str) -> ReferenceEntry:
 
 def _split_numbered_entries(text: str) -> list[str]:
     cleaned = _normalize_reference_text(text)
-    marker_re = re.compile(r"(?m)^\s*\[(\d+)\]\s+")
-    matches = list(marker_re.finditer(cleaned))
+    matches = list(_REFERENCE_MARKER_RE.finditer(cleaned))
     if not matches:
         return []
+
+    # Sequence tracking: filter out false marker lines (e.g., page/vol numbers like 591., 2015.)
+    seq_matches: list[tuple[int, int]] = []
+    expected = 1
+    for m in matches:
+        n = int(m.group(1) or m.group(2) or m.group(3))
+        if not seq_matches:
+            if n <= 5:
+                seq_matches.append((n, m.start()))
+                expected = n + 1
+        else:
+            if n == expected:
+                seq_matches.append((n, m.start()))
+                expected += 1
+            elif n > expected and n <= expected + 2:
+                seq_matches.append((n, m.start()))
+                expected = n + 1
+
+    chosen_matches = seq_matches if len(seq_matches) >= 2 else [(int(m.group(1) or m.group(2) or m.group(3)), m.start()) for m in matches]
+
     entries: list[str] = []
-    for idx, match in enumerate(matches):
-        start = match.start()
-        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(cleaned)
+    for idx in range(len(chosen_matches)):
+        start = chosen_matches[idx][1]
+        end = chosen_matches[idx + 1][1] if idx + 1 < len(chosen_matches) else len(cleaned)
         segment = cleaned[start:end].strip()
         if segment:
             entries.append(segment)
@@ -153,10 +179,25 @@ def _extract_reference_entries_from_text(text: str) -> list[ReferenceEntry]:
 
     # Recovery pass for inline markers or glued references
     recovered: list[ReferenceEntry] = []
-    for match in re.finditer(r"\[(\d+)\]\s*([^\[]+?)(?=(?:\[(?:\d+)\]|\Z))", cleaned, flags=re.DOTALL):
+    for match in re.finditer(r"(?:\[(\d+)\]|(?m)^\s*(\d+)\.)\s*([^\[\n]+(?:\n(?!\s*(?:\[\d+\]|\d+\.))[^\[\n]+)*)", cleaned):
         raw = match.group(0).strip()
         if raw:
             recovered.append(_parse_reference_entry(raw))
+    if recovered:
+        return recovered
+
+    # Unnumbered author-year bibliography pass (e.g. APA / Harvard)
+    author_year_re = re.compile(
+        r"(?m)^\s*([A-Z][a-zA-ZÀ-ÖØ-öø-ÿ'\-]+(?:,\s+[A-Z]\.?|\s+(?:and|&)\s+[A-Z]|\s+et\s+al\.).*?\(\d{4}[a-z]?\))"
+    )
+    ay_matches = list(author_year_re.finditer(cleaned))
+    if len(ay_matches) >= 2:
+        for idx, m in enumerate(ay_matches):
+            start = m.start()
+            end = ay_matches[idx + 1].start() if idx + 1 < len(ay_matches) else len(cleaned)
+            segment = cleaned[start:end].strip()
+            if segment:
+                recovered.append(_parse_reference_entry(segment))
     return recovered
 
 
@@ -173,11 +214,9 @@ def parse_reference_entries(reference_text: str) -> ReferenceBundle:
             ids.append(entry.ref_number)
     if not ids:
         ids = _extract_ids_from_text(text)
-    expected = max(ids) if ids else 0
+    expected = max(ids) if ids else len(entries)
     seen = {entry.ref_number for entry in entries if entry.ref_number is not None}
-    missing = sorted({n for n in range(1, expected + 1) if n not in seen})
-    if expected and not missing and len(entries) < expected:
-        missing = sorted(set(range(1, expected + 1)) - {entry.ref_number for entry in entries if entry.ref_number is not None})
+    missing = sorted({n for n in range(1, expected + 1) if n not in seen}) if seen else []
     return ReferenceBundle(
         entries=entries,
         reference_count=len(entries),
@@ -188,21 +227,23 @@ def parse_reference_entries(reference_text: str) -> ReferenceBundle:
 
 def find_reference_section(pages: Iterable[str]) -> tuple[int | None, str]:
     page_texts = list(pages)
-    last_match: tuple[int | None, str] | None = None
     for idx, page in enumerate(page_texts):
-        text = page
-        pos = 0
-        while True:
-            match = _HEADING_RE.search(text, pos)
-            if not match:
-                break
-            pos = match.end()
-            chunk = text[pos:pos + 500]
-            if re.search(r"(?i)(\[\s*1\s*\]|\b1\.|\(1\)|[A-Z][a-z]+,\s+[A-Z]\.\s+[A-Za-z\-]+\s*\(\d{4}\))", chunk):
-                last_match = (idx + 1, text[pos:])
-    if last_match is None:
-        return None, ""
-    return last_match
+        matches = list(_HEADING_RE.finditer(page))
+        if not matches:
+            continue
+        for heading in reversed(matches):
+            pos = heading.end()
+            chunk = page[pos:pos + 800]
+            if re.search(r"(?i)(\[\s*1\s*\]|\b1\.\s+|\(1\)|[A-Z][a-z]+(?:,\s+[A-Z]\.|\s+[A-Z]\.)\s*.*?\(\d{4}\))", chunk):
+                combined = [page[pos:]]
+                for following_page in page_texts[idx + 1:]:
+                    appendix_match = re.search(r"(?im)^\s*(?:Appendix|Appendices|Index)\b", following_page)
+                    if appendix_match:
+                        combined.append(following_page[:appendix_match.start()])
+                        break
+                    combined.append(following_page)
+                return (idx + 1, "\n".join(combined))
+    return None, ""
 
 
 def parse_reference_entries_from_pages(pages: list[str]) -> ReferenceBundle:
