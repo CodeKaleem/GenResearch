@@ -236,7 +236,7 @@ export default function Chat() {
       const body: Record<string, unknown> = {
         user_id: userId,
         query,
-        top_k: 8,
+        top_k: 14,
         history,
       };
       if (selectedPaper !== "all") {

@@ -59,12 +59,12 @@ class Settings:
     CHAT_MAP_WINDOW_CHARS: int = int(os.getenv("CHAT_MAP_WINDOW_CHARS", str(max(2000, OLLAMA_MID_CONTEXT // 3))))
 
     # Chat retrieval quality
-    CHAT_TOP_K: int = int(os.getenv("CHAT_TOP_K", "8"))                    # floor for the UI's top_k
-    CHAT_BROAD_TOP_K: int = int(os.getenv("CHAT_BROAD_TOP_K", "12"))       # summary/gaps/contributions...
+    CHAT_TOP_K: int = int(os.getenv("CHAT_TOP_K", "14"))                    # floor for the UI's top_k
+    CHAT_BROAD_TOP_K: int = int(os.getenv("CHAT_BROAD_TOP_K", "20"))       # summary/gaps/contributions...
     CHAT_FETCH_MULTIPLIER: int = int(os.getenv("CHAT_FETCH_MULTIPLIER", "3"))  # over-fetch before filtering references
-    CHAT_MAX_DISTANCE: float = float(os.getenv("CHAT_MAX_DISTANCE", "0.75"))   # cosine distance cutoff, 0 disables
+    CHAT_MAX_DISTANCE: float = float(os.getenv("CHAT_MAX_DISTANCE", "0.82"))   # cosine distance cutoff, 0 disables
     CHAT_HISTORY_TURNS: int = int(os.getenv("CHAT_HISTORY_TURNS", "6"))
-    CHAT_CONTEXT_CHARS: int = int(os.getenv("CHAT_CONTEXT_CHARS", "10000"))    # evidence budget per prompt
+    CHAT_CONTEXT_CHARS: int = int(os.getenv("CHAT_CONTEXT_CHARS", "24000"))    # evidence budget per prompt
 
     # Supabase
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
