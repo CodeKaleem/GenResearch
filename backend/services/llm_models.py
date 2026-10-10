@@ -24,7 +24,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         num_thread=settings.OLLAMA_HEAVY_NUM_THREAD,
         num_gpu=settings.OLLAMA_HEAVY_NUM_GPU,
         num_ctx=settings.OLLAMA_HEAVY_CONTEXT,
-        think=False if settings.OLLAMA_HEAVY_MODEL == "qwen3:8b" else None,
+        think=False if "qwen" in settings.OLLAMA_HEAVY_MODEL.lower() else None,
     ),
     "mid": ModelSpec(
         "mid",
@@ -33,6 +33,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         num_thread=settings.OLLAMA_MID_NUM_THREAD,
         num_gpu=settings.OLLAMA_MID_NUM_GPU,
         num_ctx=settings.OLLAMA_MID_CONTEXT,
+        think=False if "qwen" in settings.OLLAMA_MID_MODEL.lower() else None,
     ),
     "light": ModelSpec(
         "light",
@@ -41,6 +42,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         num_thread=settings.OLLAMA_LIGHT_NUM_THREAD,
         num_gpu=settings.OLLAMA_LIGHT_NUM_GPU,
         num_ctx=settings.OLLAMA_LIGHT_CONTEXT,
+        think=False if "qwen" in settings.OLLAMA_LIGHT_MODEL.lower() else None,
     ),
 }
 
