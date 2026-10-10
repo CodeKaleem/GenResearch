@@ -2,7 +2,9 @@
 # GenResearch — FastAPI Application Entry Point
 # Vector Database Pipeline for Research Paper Management
 # ============================================================
-from fastapi import FastAPI
+import logging
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from routers.papers import router as papers_router
@@ -14,6 +16,8 @@ from routers.agent_tasks import router as agent_tasks_router
 from routers.research_search import router as research_search_router
 from services.logging_bridge import install_supabase_log_handler
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -23,11 +27,26 @@ app = FastAPI(
 # ── CORS ──────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+    ],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+):(3000|3001)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("unhandled_exception: %s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}"},
+    )
 
 # ── Routers ───────────────────────────────────────────────────
 app.include_router(papers_router)

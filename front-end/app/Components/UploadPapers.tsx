@@ -94,8 +94,15 @@ export default function UploadPapers() {
       });
 
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.detail || "Upload failed");
+        let errorMsg = "Upload failed";
+        try {
+          const errData = await response.json();
+          errorMsg = errData.detail || errorMsg;
+        } catch {
+          const text = await response.text();
+          if (text) errorMsg = text;
+        }
+        throw new Error(errorMsg);
       }
 
       // Success! The database subscription will pick up the new records
