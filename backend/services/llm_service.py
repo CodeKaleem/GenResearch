@@ -89,8 +89,19 @@ def _request_payload(
     return payload
 
 
+_THINK_OPEN_TAGS = ["<think>", "<thought>", "<thinking>"]
+_THINK_CLOSE_TAGS = ["</think>", "</thought>", "</thinking>"]
+
+
 def _strip_think_blocks(text: str) -> str:
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+    cleaned = re.sub(
+        r"<(?:think|thought|thinking)>.*?(?:</(?:think|thought|thinking)>|$)",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    cleaned = re.sub(r"</(?:think|thought|thinking)>", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
 
 
 def _partial_tag_suffix_length(text: str, tag: str) -> int:
@@ -107,27 +118,47 @@ def _filter_think_chunk(content: str, state: dict, *, final: bool = False) -> st
     while data:
         lowered = data.lower()
         if state.get("inside_think", False):
-            closing = lowered.find("</think>")
-            if closing < 0:
-                suffix_length = 0 if final else _partial_tag_suffix_length(data, "</think>")
+            earliest_close = -1
+            close_tag_len = 0
+            for tag in _THINK_CLOSE_TAGS:
+                pos = lowered.find(tag)
+                if pos >= 0 and (earliest_close < 0 or pos < earliest_close):
+                    earliest_close = pos
+                    close_tag_len = len(tag)
+
+            if earliest_close < 0:
+                if final:
+                    state["pending"] = ""
+                    return "".join(output)
+                suffix_length = max((_partial_tag_suffix_length(data, tag) for tag in _THINK_CLOSE_TAGS), default=0)
                 state["pending"] = data[-suffix_length:] if suffix_length else ""
                 return "".join(output)
-            data = data[closing + len("</think>"):]
+
+            data = data[earliest_close + close_tag_len:]
             state["inside_think"] = False
             continue
 
-        opening = lowered.find("<think>")
-        if opening >= 0:
-            output.append(data[:opening])
-            data = data[opening + len("<think>"):]
+        earliest_open = -1
+        open_tag_len = 0
+        for tag in _THINK_OPEN_TAGS:
+            pos = lowered.find(tag)
+            if pos >= 0 and (earliest_open < 0 or pos < earliest_open):
+                earliest_open = pos
+                open_tag_len = len(tag)
+
+        if earliest_open >= 0:
+            output.append(data[:earliest_open])
+            data = data[earliest_open + open_tag_len:]
             state["inside_think"] = True
             continue
+
         if final:
             output.append(data)
             data = ""
             state["pending"] = ""
             break
-        suffix_length = _partial_tag_suffix_length(data, "<think>")
+
+        suffix_length = max((_partial_tag_suffix_length(data, tag) for tag in _THINK_OPEN_TAGS), default=0)
         safe_length = len(data) - suffix_length
         output.append(data[:safe_length])
         state["pending"] = data[safe_length:]

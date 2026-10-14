@@ -43,6 +43,21 @@ interface PaperOption {
   status: string;
 }
 
+/**
+ * Strips raw internal reasoning/monologue tags (<think>, <thought>, <thinking>)
+ * including unclosed tags during active streaming, ensuring monologue never reaches the UI.
+ */
+export function stripThinking(text: string): string {
+  if (!text) return "";
+  // 1. Remove closed thinking blocks
+  let cleaned = text.replace(/<(?:think|thought|thinking)>[\s\S]*?<\/(?:think|thought|thinking)>/gi, "");
+  // 2. Remove unclosed thinking blocks (active streaming or truncated)
+  cleaned = cleaned.replace(/<(?:think|thought|thinking)>[\s\S]*$/gi, "");
+  // 3. Remove any stray closing tags
+  cleaned = cleaned.replace(/<\/(?:think|thought|thinking)>/gi, "");
+  return cleaned.trimStart();
+}
+
 export default function Chat() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>("");
@@ -274,13 +289,14 @@ export default function Chat() {
                 sources = data.sources || [];
               } else if (data.type === "token") {
                 fullContent += data.content;
+                const displayContent = stripThinking(fullContent);
                 setSessions((prev) =>
                   prev.map((s) => {
                     if (s.id === activeSession.id) {
                       return {
                         ...s,
                         messages: s.messages.map((m) =>
-                          m.id === assistantId ? { ...m, content: fullContent, sources } : m
+                          m.id === assistantId ? { ...m, content: displayContent, sources } : m
                         ),
                       };
                     }
@@ -302,6 +318,7 @@ export default function Chat() {
       }
 
       // Final update to clear streaming state
+      const cleanedFinal = stripThinking(fullContent);
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id === activeSession.id) {
@@ -309,7 +326,7 @@ export default function Chat() {
               ...s,
               messages: s.messages.map((m) =>
                 m.id === assistantId
-                  ? { ...m, content: fullContent || "No response received.", sources, isStreaming: false }
+                  ? { ...m, content: cleanedFinal || "No response received.", sources, isStreaming: false }
                   : m
               ),
             };
@@ -566,7 +583,7 @@ export default function Chat() {
                   boxShadow: `0 2px 8px ${C.shadow}`,
                 }}
               >
-                {msg.content || (msg.isStreaming && (
+                {stripThinking(msg.content) || (msg.isStreaming && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.inkLight }}>
                     <span style={{ display: "inline-block", animation: "spin 1.2s linear infinite" }}>⟳</span>
                     Searching documents and generating answer...

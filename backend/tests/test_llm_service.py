@@ -158,3 +158,10 @@ def test_call_llm_stream_parses_native_ndjson_and_strips_think(monkeypatch):
         return [token async for token in llm_service.call_llm_stream("prompt", agent_role="test")]
 
     assert asyncio.run(collect()) == ["before", "after"]
+
+
+def test_strip_think_blocks_handles_unclosed_and_variants():
+    assert llm_service._strip_think_blocks("Hello <think>internal monologue</think> world") == "Hello  world"
+    assert llm_service._strip_think_blocks("Answer: 42 <think>unclosed trailing thought") == "Answer: 42"
+    assert llm_service._strip_think_blocks("Final: <thought>reasoning</thought> done") == "Final:  done"
+    assert llm_service._strip_think_blocks("Intro <thinking>deep thinking</thinking> outro") == "Intro  outro"
