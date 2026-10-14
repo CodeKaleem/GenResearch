@@ -15,13 +15,20 @@ from __future__ import annotations
 
 import re
 
-STRUCTURED_INTENTS = {"citations", "sections_list", "items_list"}
+STRUCTURED_INTENTS = {"citation_count", "citations", "sections_list", "items_list"}
 BROAD_INTENTS = {"summary", "gaps", "improvements", "future_work", "contributions"}
 
 _LIST_VERB = r"(?:list|extract|show|give|get|print|enumerate)"
 
 # Order matters: first match wins.
 _PATTERNS: list[tuple[str, list[str]]] = [
+    ("citation_count", [
+        r"\bhow many (?:references|citations|papers are cited|works are cited|studies are cited)\b",
+        r"\b(?:citation|reference)\s+count\b",
+        r"\bcount (?:the\s+)?(?:references|citations)\b",
+        r"\bnumber of (?:references|citations|cited papers|cited works)\b",
+        r"\btotal (?:number of\s+)?(?:references|citations)\b",
+    ]),
     ("citations", [
         rf"\b{_LIST_VERB}\b.{{0,40}}\b(?:references|citations|bibliography)\b",
         r"\bwhich (?:papers|works|studies|articles) (?:are|were) cited\b",

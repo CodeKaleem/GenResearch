@@ -143,3 +143,69 @@ async def handle_citations(user_id: str, query: str, *, paper_id: str | None = N
         "coverage": coverage,
         "items": None,
     }
+
+
+async def handle_citation_count(user_id: str, query: str, *, paper_id: str | None = None) -> dict:
+    """
+    Concrete extraction task: find the highest reference number in the document
+    rather than trying to count from partial excerpts.
+    """
+    sb = get_supabase()
+
+    def _load_papers():
+        q = sb.table("papers").select("id, user_id, title, storage_path").eq("user_id", user_id)
+        if paper_id:
+            q = q.eq("id", paper_id)
+        return q.execute().data or []
+
+    papers = await asyncio.to_thread(_load_papers)
+
+    if not papers:
+        return {
+            "answer": "No papers are available for citation counting.",
+            "sources": [],
+            "chunks_used": 0,
+            "model": "doc-structure",
+            "intent": "citation_count",
+            "coverage": dict(_EMPTY_COVERAGE),
+            "items": None,
+        }
+
+    blocks = list(await asyncio.gather(*(_references_for_paper(sb, user_id, paper) for paper in papers)))
+
+    answers: list[str] = []
+    for b in blocks:
+        cov = b.get("coverage", {})
+        total = cov.get("total", 0)
+        covered = cov.get("covered", 0)
+        title = b.get("title", "Untitled")
+
+        # Concrete extraction task: find highest reference number
+        count = total if total > 0 else covered
+        if count > 0:
+            if len(blocks) == 1:
+                answers.append(f"This paper cites **{count}** references (highest numbered reference entry is [{count}]).")
+            else:
+                answers.append(f"**{title}**: **{count}** references (highest reference number: [{count}]).")
+        else:
+            if len(blocks) == 1:
+                answers.append("No numbered references were found in the document.")
+            else:
+                answers.append(f"**{title}**: No numbered references found.")
+
+    return {
+        "answer": "\n\n".join(answers),
+        "sources": [{"paper_id": b["paper_id"], "title": b["title"], "relevance": 1.0} for b in blocks],
+        "chunks_used": 0,
+        "model": "doc-structure",
+        "intent": "citation_count",
+        "coverage": {
+            "unit": "references",
+            "covered": sum(b["coverage"]["covered"] for b in blocks),
+            "total": sum(b["coverage"]["total"] for b in blocks),
+            "percent": _percent(sum(b["coverage"]["covered"] for b in blocks), sum(b["coverage"]["total"] for b in blocks)),
+            "missing": blocks[0]["coverage"]["missing"] if len(blocks) == 1 else [],
+        },
+        "items": None,
+    }
+

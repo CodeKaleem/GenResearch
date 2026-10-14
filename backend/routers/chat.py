@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import settings
-from services.doc_chat.handlers.citations import handle_citations
+from services.doc_chat.handlers.citations import handle_citations, handle_citation_count
 from services.doc_chat.handlers.items_list import handle_items_list
 from services.doc_chat.handlers.qa import handle_qa, handle_qa_stream
 from services.doc_chat.handlers.sections_list import handle_sections_list
@@ -80,7 +80,9 @@ async def ask_question(req: AskRequest):
         if settings.CHAT_INTENT_ROUTING:
             intent, requested_n = route_query(req.query)
 
-        if intent == "citations":
+        if intent == "citation_count":
+            result = await handle_citation_count(user_id=req.user_id, query=req.query, paper_id=req.paper_id)
+        elif intent == "citations":
             result = await handle_citations(user_id=req.user_id, query=req.query, paper_id=req.paper_id, top_k=req.top_k)
         elif intent == "sections_list":
             result = await handle_sections_list(user_id=req.user_id, paper_id=req.paper_id)
@@ -126,7 +128,9 @@ async def ask_question_stream(req: AskRequest):
                 intent, requested_n = route_query(req.query)
 
             if intent in STRUCTURED_INTENTS:
-                if intent == "citations":
+                if intent == "citation_count":
+                    result = await handle_citation_count(user_id=req.user_id, query=req.query, paper_id=req.paper_id)
+                elif intent == "citations":
                     result = await handle_citations(user_id=req.user_id, query=req.query, paper_id=req.paper_id, top_k=req.top_k)
                 elif intent == "sections_list":
                     result = await handle_sections_list(user_id=req.user_id, paper_id=req.paper_id)
