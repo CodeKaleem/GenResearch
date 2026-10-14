@@ -20,6 +20,10 @@ from services.llm_models import ModelSpec
     ("What does reference [12] say about dropout?", "qa"),
     ("Explain Table 2 results", "qa"),
     ("Which method excited the authors most?", "qa"),
+    ("How many citations are there?", "citation_count"),
+    ("How many references does this paper have?", "citation_count"),
+    ("What is the citation count?", "citation_count"),
+    ("Count the references", "citation_count"),
     ("List all the figures", "items_list"),
     ("How many tables are there?", "items_list"),
     ("Extract all references", "citations"),
@@ -217,3 +221,50 @@ def test_chat_roles_get_tighter_read_timeout(monkeypatch):
     monkeypatch.setattr(settings, "OLLAMA_CHAT_READ_TIMEOUT", 120.0)
     assert llm_service._read_timeout_for_role("chat") == 120.0
     assert llm_service._read_timeout_for_role("draft") is None
+
+
+def test_right_sized_prompt_distinguishes_factual_and_complex_queries():
+    chunks = [{"paper_id": "p1", "title": "Paper A", "text": "Content", "page": 1}]
+    
+    factual_prompt = rag_service._build_rag_prompt("Who wrote this?", chunks)
+    assert "CONCISE FACTUAL LOOKUP" in factual_prompt
+    assert "Markdown Headings: STRICTLY FORBIDDEN" in factual_prompt
+    assert "Concise Grounded Answer:" in factual_prompt
+    
+    deep_prompt = rag_service._build_rag_prompt("Summarize the methodology and findings", chunks)
+    assert "COMPREHENSIVE / ANALYTICAL QUERY" in deep_prompt
+    assert "Descriptive Grounded Answer:" in deep_prompt
+
+
+def test_page1_block_merging_keeps_authors_intact():
+    from ingestion.pdf_parser import ParsedBlock
+    from ingestion.structured_chunker import _merge_blocks_for_chunking
+    
+    blocks = [
+        ParsedBlock("Adversarial Risk Analysis", page=1, section_heading="Title & Authors"),
+        ParsedBlock("David Ríos Insua", page=1, section_heading="Title & Authors"),
+        ParsedBlock("Royal Academy of Sciences, Madrid, Spain", page=1, section_heading="Title & Authors"),
+        ParsedBlock("Fabrizio Ruggeri", page=1, section_heading="Title & Authors"),
+    ]
+    merged = _merge_blocks_for_chunking(blocks, max_merge_len=1000)
+    assert len(merged) == 1
+    assert "David Ríos Insua" in merged[0].text
+    assert "Fabrizio Ruggeri" in merged[0].text
+    assert "Adversarial Risk Analysis" in merged[0].text
+
+
+def test_self_check_catches_missed_author():
+    chunks = [
+        {
+            "paper_id": "p1",
+            "title": "Adversarial Risk Analysis",
+            "page": 1,
+            "text": "Adversarial Risk Analysis\nDavid Ríos Insua, Fabrizio Ruggeri, Michael P. Wiper\nAbstract: We propose...",
+            "metadata": {"section_heading": "Title & Authors"},
+        }
+    ]
+    # Incomplete draft that missed David Ríos Insua
+    draft = "This paper was written by Fabrizio Ruggeri and Michael P. Wiper."
+    verified = rag_service._self_check_factual_answer("Who wrote this?", draft, chunks)
+    assert "David Ríos Insua" in verified or "David Rios Insua" in verified
+
