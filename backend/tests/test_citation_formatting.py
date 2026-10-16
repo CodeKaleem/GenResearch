@@ -233,3 +233,51 @@ def test_freeform_citation_at_sentence_start_gets_marker_at_sentence_end():
 
     assert not result.startswith("[CITATION NEEDED]")
     assert result.endswith("[CITATION NEEDED].")
+
+
+# ── Bug 1 regression: citations must survive when evidence_by_source is empty ─
+
+def test_cited_sentence_preserved_when_evidence_not_retrieved():
+    """A sentence with a valid [CR-###] tag must NOT be flagged as [CITATION NEEDED]
+    just because evidence_by_source is empty (retrieval returned nothing).
+    Previously the entity check fired on every number/capitalized word when
+    evidence was empty, causing all cited sentences to get flagged."""
+    result = flag_ungrounded_specifics(
+        "These models achieved 94% accuracy [CR-001].",
+        evidence_by_source={},
+        valid_source_ids={"CR-001"},
+        topic="machine learning",
+    )
+    assert "[CITATION NEEDED]" not in result, (
+        "Sentence with valid [CR-001] was incorrectly flagged when evidence was empty."
+    )
+
+
+def test_uncited_sentence_still_flagged_when_evidence_empty():
+    """Sentences with NO [CR-###] tag should still be flagged even when
+    evidence_by_source is empty."""
+    result = flag_ungrounded_specifics(
+        "These models achieved 94% accuracy.",
+        evidence_by_source={},
+        valid_source_ids={"CR-001"},
+        topic="machine learning",
+    )
+    assert "[CITATION NEEDED]" in result
+
+
+def test_multiple_cited_sentences_survive_empty_evidence():
+    """All cited sentences are preserved when evidence is absent."""
+    text = (
+        "Model A scored 0.92 F1 [CR-001]. "
+        "Model B used 10,000 training examples [CR-002]. "
+        "No citation here."
+    )
+    result = flag_ungrounded_specifics(
+        text,
+        evidence_by_source={},
+        valid_source_ids={"CR-001", "CR-002"},
+        topic="NLP benchmarks",
+    )
+    assert "[CR-001]" in result
+    assert "[CR-002]" in result
+    assert "No citation here [CITATION NEEDED]" in result

@@ -130,13 +130,22 @@ def ground_ungrounded_specifics(
         valid_ids = citation_ids & valid_source_ids
         body = CITATION_TAG.sub("", sentence)
         evidence = " ".join(evidence_by_source.get(cid, "") for cid in valid_ids)
+        evidence_available = bool(evidence.strip())
         allowed = _normalize_grounding_text(f"{evidence} {topic}")
         specifics = _NUMBER.findall(body) + _entity_candidates(body)
-        unsupported_specifics = [
-            specific
-            for specific in dict.fromkeys(specifics)
-            if _normalize_grounding_text(specific) not in allowed
-        ]
+        # Only run specifics grounding when evidence text was actually retrieved.
+        # If the sentence has a valid [CR-###] tag but retrieval returned nothing
+        # (evidence_available is False), preserve the citation rather than
+        # flagging every number/entity as "unsupported".
+        unsupported_specifics = (
+            [
+                specific
+                for specific in dict.fromkeys(specifics)
+                if _normalize_grounding_text(specific) not in allowed
+            ]
+            if evidence_available
+            else []
+        )
         needs_flag = (
             not valid_ids
             or bool(citation_ids - valid_source_ids)

@@ -129,11 +129,15 @@ async def draft_node(state: dict) -> dict:
                 session_id=session_id,
                 query=f"{topic} {section_name}",
                 top_k=8,
-                source_ids=sorted(assigned_ids),
+                # Pass None (no filter) when no sources are assigned — passing an
+                # empty list causes ChromaDB to return chunks but the post-filter
+                # below then removes every one of them, leaving evidence_by_source={}
+                # and causing all LLM-written citations to be flagged/stripped.
+                source_ids=sorted(assigned_ids) if assigned_ids else None,
             )
             section_evidence = [
                 chunk for chunk in section_evidence
-                if chunk.get("source_id") in assigned_ids
+                if not assigned_ids or chunk.get("source_id") in assigned_ids
             ]
             seen_chunk_ids = set()
             section_evidence = [

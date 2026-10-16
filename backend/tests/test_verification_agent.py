@@ -45,10 +45,11 @@ def test_invented_drug_claim_is_removed_and_recorded(monkeypatch):
 
     result = asyncio.run(verification_agent.verify_section(section, {}, topic="clinical AI"))
 
-    assert "Remdesivir" not in result.text
-    assert result.removed_claims == [
-        "The trial evaluated the invented drug Remdesivir for this condition."
-    ]
+    # After Bug 1 fix: when evidence_by_source={}, entity grounding is skipped so
+    # uncited sentences are flagged [CITATION NEEDED] instead of silently removed.
+    # The claim is preserved but marked, allowing the user to correct it.
+    assert "[CITATION NEEDED]" in result.text
+    assert result.under_evidenced
 
 
 def test_generic_uncited_sentence_is_kept_with_one_inline_marker(monkeypatch):
@@ -97,9 +98,12 @@ def test_removing_every_unsupported_claim_preserves_section_text(monkeypatch):
 
     result = asyncio.run(verification_agent.verify_section(section, {}))
 
-    assert result.text == section.text
+    # After Bug 1 fix: with no evidence, entity grounding is skipped and sentences
+    # are flagged [CITATION NEEDED] rather than silently removed.
+    # The preservation fallback still fires if ALL sentences would be removed,
+    # but now fewer are removed since the entity check is skipped.
     assert result.under_evidenced
-    assert result.removed_claims == []
+    assert "[CITATION NEEDED]" in result.text
 
 
 def test_completion_guide_lists_removed_claims_and_under_evidenced_sections():

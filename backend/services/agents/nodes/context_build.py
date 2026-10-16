@@ -50,7 +50,12 @@ def _select_relevant_sources(section_name: str, guidance: str, registry: list[di
             scored.append((overlap, source))
 
     if not scored:
-        return []
+        # No keyword overlap — usually because the registry entry has no
+        # abstract_snippet (common for scraped/uploaded sources). Rather than
+        # returning [] and starving the section of any sources (which triggers
+        # the empty-retrieval chain leading to [CITATION NEEDED] everywhere),
+        # fall back to the full eligible registry capped at the same limit.
+        return list(registry[:limit])
 
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return [source for _, source in scored[:limit]]
