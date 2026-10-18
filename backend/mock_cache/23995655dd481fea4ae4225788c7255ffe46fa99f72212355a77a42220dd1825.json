@@ -1,0 +1,71 @@
+{
+  "query": "graph neural networks",
+  "cached_at": "2026-10-17T14:15:00Z",
+  "total_results": 8,
+  "results": [
+    {
+      "source": "arXiv",
+      "title": "A Comprehensive Survey on Graph Neural Networks",
+      "authors": ["Zonghan Wu", "Shirui Pan", "Fengwen Chen", "Guodong Long", "Chengqi Zhang", "Philip S. Yu"],
+      "abstract": "Deep learning has revolutionized many machine learning tasks in recent years, ranging from image classification and video processing to speech recognition and natural language processing. However, data in these tasks are typically represented in the Euclidean space. In many real-world applications, data are represented in the form of graphs, e.g., social networks, physical systems, protein-protein interaction networks, knowledge graphs, and others. Graph neural networks (GNNs) are connectionist models that capture the dependence of graphs via message passing between the nodes of graphs. In this survey, we provide a comprehensive overview of graph neural networks in data mining and machine learning fields. We propose a new taxonomy to divide the state-of-the-art graph neural networks into four categories: recurrent graph neural networks, convolutional graph neural networks, graph autoencoders, and spatial-temporal graph neural networks.",
+      "url": "https://arxiv.org/abs/1901.00596",
+      "publication_date": "2019-01-02"
+    },
+    {
+      "source": "arXiv",
+      "title": "Semi-Supervised Classification with Graph Convolutional Networks",
+      "authors": ["Thomas N. Kipf", "Max Welling"],
+      "abstract": "We present a scalable approach for semi-supervised learning on graph-structured data that is based on an efficient variant of convolutional neural networks which operate directly on graphs. We motivate the choice of our convolutional architecture via a localized first-order approximation of spectral graph convolutions. Our model scales linearly in the number of graph edges and learns hidden layer representations that encode both local graph structure and features of nodes. In a number of experiments on citation networks and on a knowledge graph dataset, we demonstrate that our approach outperforms related methods by a significant margin.",
+      "url": "https://arxiv.org/abs/1609.02907",
+      "publication_date": "2016-09-09"
+    },
+    {
+      "source": "Crossref",
+      "title": "Graph Neural Networks: A Review of Methods and Applications",
+      "authors": ["Jie Zhou", "Ganqu Cui", "Shengding Hu", "Zhengyan Zhang", "Cheng Yang", "Zhiyuan Liu", "Lifeng Wang", "Changcheng Li", "Maosong Sun"],
+      "abstract": "Lots of learning tasks require dealing with graph data which contains rich relation information among elements. Modeling physics systems, learning molecular fingerprints, predicting protein interface, and classifying diseases demand a model to learn from graph inputs. In recent years, systems using graph neural networks (GNNs) have achieved superior performance on such tasks.",
+      "url": "https://doi.org/10.1016/j.aiopen.2021.01.001",
+      "publication_date": "2020"
+    },
+    {
+      "source": "Crossref",
+      "title": "Graph Neural Networks: Foundations, Frontiers, and Applications",
+      "authors": ["Lingfei Wu", "Peng Cui", "Jian Pei", "Liang Zhao"],
+      "abstract": "This book provides a comprehensive and modern introduction to graph neural networks (GNNs), covering foundations, frontier research, and diverse practical applications across computer vision, natural language processing, and biochemistry.",
+      "url": "https://doi.org/10.1007/978-981-16-6054-2",
+      "publication_date": "2022"
+    },
+    {
+      "source": "SemanticScholar",
+      "title": "Inductive Representation Learning on Large Graphs",
+      "authors": ["William L. Hamilton", "Zhitao Ying", "Jure Leskovec"],
+      "abstract": "Low-dimensional embeddings of nodes in large graphs have proved extremely useful in a variety of prediction tasks, from content recommendation to identifying protein functions. However, most existing approaches require that all nodes in the graph are present during training of the embeddings; these previous approaches are inherently transductive and do not naturally generalize to unseen nodes. Here we present GraphSAGE, a general inductive framework that leverages node feature information (e.g., text attributes) to efficiently generate node embeddings for previously unseen data.",
+      "url": "https://www.semanticscholar.org/paper/Inductive-Representation-Learning-on-Large-Graphs-Hamilton-Ying/5d90f29bf705b637f5d08cb7cb1a2db12f68b375",
+      "publication_date": "2017"
+    },
+    {
+      "source": "SemanticScholar",
+      "title": "Graph Attention Networks",
+      "authors": ["Petar Veličković", "Guillem Cucurull", "Arantxa Casanova", "Adriana Romero", "Pietro Liò", "Yoshua Bengio"],
+      "abstract": "We present graph attention networks (GATs), novel neural network architectures that operate on graph-structured data, leveraging masked self-attentional layers to address the shortcomings of prior methods based on graph convolutions or their approximations. By stacking layers in which nodes are able to attend over their neighborhoods' features, we enable (implicitly) specifying different weights to different nodes in a neighborhood, without requiring any kind of costly matrix operation or depending on knowing the graph structure upfront.",
+      "url": "https://www.semanticscholar.org/paper/Graph-Attention-Networks-Veli%C4%8Dkovi%C4%87-Cucurull/eed2a0ba1ca464c000e3e782ad72eeeb1c28c894",
+      "publication_date": "2018"
+    },
+    {
+      "source": "OpenAlex",
+      "title": "How Powerful are Graph Neural Networks?",
+      "authors": ["Keyulu Xu", "Weihua Hu", "Jure Leskovec", "Stefanie Jegelka"],
+      "abstract": "Graph Neural Networks (GNNs) are an effective framework for learning representation of graphs. However, the expressive power of GNNs is not well understood. Here, we present a theoretical framework for analyzing the expressive power of GNNs to capture different graph structures. We characterize the representational capacity of popular GNN variants and show that they cannot learn to distinguish certain simple graph structures. We then develop a provably maximally powerful GNN called the Graph Isomorphism Network (GIN).",
+      "url": "https://openalex.org/W2899451998",
+      "publication_date": "2019-01-28"
+    },
+    {
+      "source": "OpenAlex",
+      "title": "Benchmarking Graph Neural Networks",
+      "authors": ["Vijay Prakash Dwivedi", "Chaitanya K. Joshi", "Anh Tuan Luu", "Thomas Laurent", "Yoshua Bengio", "Xavier Bresson"],
+      "abstract": "Graph Neural Networks (GNNs) have gained significant traction as a powerful framework for machine learning on relational and graph-structured data. Despite rapid advancements, fair and rigorous empirical evaluation of GNN architectures remains a bottleneck due to dataset variances and lack of standardized benchmarks. We introduce an open-source benchmarking framework for GNNs with diverse medium-scale datasets covering node, edge, and graph-level predictions.",
+      "url": "https://openalex.org/W3006456012",
+      "publication_date": "2020-03-02"
+    }
+  ]
+}

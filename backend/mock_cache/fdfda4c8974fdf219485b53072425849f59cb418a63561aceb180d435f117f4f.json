@@ -1,0 +1,82 @@
+{
+  "query": "Reinforcement Learning from Human Feedback",
+  "query_hash": "fdfda4c8974fdf219485b53072425849f59cb418a63561aceb180d435f117f4f",
+  "cached_at": "2026-10-17T09:18:55.944104Z",
+  "total_results": 6,
+  "results": [
+    {
+      "source": "arXiv",
+      "title": "When Pairwise Preferences Cycle: A Reliability-Anchored Preference Walk for Video GRPO",
+      "authors": [
+        "Xinrui Lin",
+        "Fan Li",
+        "Shumin Wang",
+        "Dehong Kong",
+        "Yanyong Zhang"
+      ],
+      "abstract": "Pairwise preference feedback has become a widely adopted supervision signal for reinforcement learning in video generation models, as pairwise comparisons provide a more reliable alternative than pointwise scalar ratings for evaluating the quality of generated videos. Specifically, we define a preference graph for each GRPO group under a pairwise evaluator, where nodes represent sampled rollouts and edges encode pairwise preferences. Auditing 6,976 on-policy comparison graphs, we find that cyclic preferences are prevalent and persist throughout training. Naive pairwise reward aggregation based on average win rates discards the underlying comparison structures and treats each rollout independently, which may introduce unreliable advantage estimates for certain rollouts and consequently affect reinforcement learning optimization. Therefore, we propose the \\emph{Reliability-Anchored Preference Walk} (\\ours{}), a graph-aware advantage aggregation method that strengthens the global preference signal from win rates with reliable relational evidence from cyclic preference graphs through a reliability-guided preference walk. Under matched evaluator, comparison protocol, group size, prompt schedule, and query budget, \\ours{} requires no additional evaluator queries beyond the observed comparisons within each rollout group and improves over Pairwise-GRPO across controlled comparisons, transfer settings, and blind human evaluations.",
+      "url": "https://arxiv.org/abs/2610.20089",
+      "publication_date": "2026-10-14"
+    },
+    {
+      "source": "arXiv",
+      "title": "Beyond the Verdict: Agentic Code Judging with Verifiable Feedback",
+      "authors": [
+        "Zheye Deng",
+        "Sha Li",
+        "Changlong Yu",
+        "Xin Liu",
+        "Qin Lu",
+        "Priyanka Nigam",
+        "Yangqiu Song"
+      ],
+      "abstract": "Test-time scaling for large language models (LLMs) can involve generating multiple candidate solutions for selection or revising an earlier attempt. To guide selection and revision, we need a verifier that can estimate candidate correctness and provide evidence of failure. In competitive programming, however, official judging systems provide authoritative verdicts under finite submission budgets, without revealing failure explanations or failing inputs. To provide informative feedback without consuming official submissions, we formulate a task in which a model judges and diagnoses a candidate program using only the problem statement and source code, with generated counterexamples serving as checkable evidence. To evaluate this task, we build USACO-JUDGE from the USACO 2026 contests, using accepted and unaccepted programs written by human experts and multiple LLMs. We then train ARBITER, a 35B mixture-of-experts (MoE) agentic verifier, with reinforcement learning in a generic execution sandbox. Training raises counterexample success on incorrect programs from 40.61% to 62.67% and mean binary verdict accuracy on USACO-JUDGE from 71.41% to 87.41%, approaching frontier verification performance. Beyond verification, ARBITER outperforms baselines in both code selection and refinement. In an IOI 2026 case study, ARBITER-guided refinement raises GPT-OSS-120B's expected score above the gold-medal threshold under the official submission limit.",
+      "url": "https://arxiv.org/abs/2610.18760",
+      "publication_date": "2026-10-13"
+    },
+    {
+      "source": "arXiv",
+      "title": "Human -Inspired Asymmetric Collaboration for Dual-Student Semi-Supervised Medical Image Segmentation",
+      "authors": [
+        "Huiyi Ren",
+        "Ziming Fang",
+        "Jiaming Cai",
+        "Rui Xu",
+        "Haojie Li"
+      ],
+      "abstract": "Dual-student learning enriches predictive diversity in SSMIS by introducing a strongly augmented view alongside a weakly augmented view. Insufficient strong augmentation may homogenize the students, whereas excessive augmentation can corrupt anatomical evidence and destabilize collaboration. This challenge echoes feedback -regulated human instruction, where learners receive differentiated tasks and the task difficulty is continually adjusted according to their evolving responses. Inspired by these, we propose Human -Inspired Asymmetric Collaboration (HAC), a closed-loop dual-student framework that maintains weak--strong learning through adaptive difficulty calibration and geometry preservation. Specifically, Reinforcement -guided Difficulty Calibration (RDC) formulates strong-augmentation control as a window-level reinforcement learning process, using augmentation history, realized perturbations, and training responses to dynamically adjust the augmentation magnitude, operation number, and magnitude range. Meanwhile, the Gramian Geometry Preservation Constraint (G2PC) preserves the early-stage three-branch geometry through global volume and pairwise area constraints, preventing shared supervision from homogenizing the two students. Comprehensive evaluations across LA, Pancreas, and BraTS-2019 validate both the segmentation effectiveness and capability-aware difficulty calibration of HAC.",
+      "url": "https://arxiv.org/abs/2610.18133",
+      "publication_date": "2026-10-13"
+    },
+    {
+      "source": "Crossref",
+      "title": "Human Reinforcement Learning from AI Feedback: Feedback Mechanisms, Meta-Collaborative Monitoring, and Identity Positioning in Long-Term Human-AI Collaboration",
+      "authors": [
+        "Lingxiao Du"
+      ],
+      "abstract": "",
+      "url": "https://doi.org/10.2139/ssrn.6928698",
+      "publication_date": ""
+    },
+    {
+      "source": "Crossref",
+      "title": "Efficient Reinforcement Learning from Human Feedback via Bayesian Preference Inference",
+      "authors": [
+        "MATTEO CERCOLA | Valeria Capretti | Simone Formentin"
+      ],
+      "abstract": "",
+      "url": "https://doi.org/10.2139/ssrn.5806082",
+      "publication_date": ""
+    },
+    {
+      "source": "Crossref",
+      "title": "The Role of Foundational Autoraters in Reinforcement Learning from Human Feedback (RLHF)&nbsp;",
+      "authors": [
+        "Samira Boukhris"
+      ],
+      "abstract": "",
+      "url": "https://doi.org/10.2139/ssrn.6338238",
+      "publication_date": ""
+    }
+  ]
+}

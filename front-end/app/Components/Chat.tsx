@@ -24,6 +24,8 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  thinking?: string;
+  isThinking?: boolean;
   sources?: Source[];
   timestamp: string;
   isStreaming?: boolean;
@@ -44,18 +46,50 @@ interface PaperOption {
 }
 
 /**
+ * Splits raw internal reasoning/monologue from the actual answer.
+ * Handles both tagged blocks (<think>...</think>) and untagged chain-of-thought preambles.
+ */
+export function extractThinkingAndAnswer(text: string): { thinking: string; answer: string } {
+  if (!text) return { thinking: "", answer: "" };
+
+  // 1. Tagged thinking <think>...</think>
+  const closedMatch = text.match(/<(?:think|thought|thinking)>([\s\S]*?)<\/(?:think|thought|thinking)>/i);
+  if (closedMatch) {
+    const thinking = closedMatch[1].trim();
+    const answer = text.replace(/<(?:think|thought|thinking)>[\s\S]*?<\/(?:think|thought|thinking)>/gi, "").trim();
+    return { thinking, answer };
+  }
+
+  // Unclosed <think>... during streaming
+  const unclosed = text.match(/<(?:think|thought|thinking)>([\s\S]*)$/i);
+  if (unclosed) {
+    return { thinking: unclosed[1].trim(), answer: "" };
+  }
+
+  // 2. Untagged chain-of-thought preambles
+  const preambleRegex = /^((?:We are given a user question|First, I need to scan|Looking at the document|Important: The user is asking|Let me check the document|The user's question is|Given the strict rules)[\s\S]+?)(?=(?:\r?\n){2,}(?:#+\s*|\*\*|Answer:|Descriptive|Based on|In summary|According to)|$)/i;
+  const preambleMatch = text.match(preambleRegex);
+  if (preambleMatch && preambleMatch[1].length > 40) {
+    const thinking = preambleMatch[1].trim();
+    const remainder = text.slice(preambleMatch[0].length).trim();
+    if (remainder.length > 0) {
+      return { thinking, answer: remainder };
+    } else {
+      return { thinking, answer: "" };
+    }
+  }
+
+  return { thinking: "", answer: text.trim() };
+}
+
+/**
  * Strips raw internal reasoning/monologue tags (<think>, <thought>, <thinking>)
- * including unclosed tags during active streaming, ensuring monologue never reaches the UI.
+ * ensuring monologue never bleeds into the permanent answer.
  */
 export function stripThinking(text: string): string {
   if (!text) return "";
-  // 1. Remove closed thinking blocks
-  let cleaned = text.replace(/<(?:think|thought|thinking)>[\s\S]*?<\/(?:think|thought|thinking)>/gi, "");
-  // 2. Remove unclosed thinking blocks (active streaming or truncated)
-  cleaned = cleaned.replace(/<(?:think|thought|thinking)>[\s\S]*$/gi, "");
-  // 3. Remove any stray closing tags
-  cleaned = cleaned.replace(/<\/(?:think|thought|thinking)>/gi, "");
-  return cleaned.trimStart();
+  const { answer } = extractThinkingAndAnswer(text);
+  return answer;
 }
 
 export default function Chat() {
@@ -269,6 +303,7 @@ export default function Chat() {
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       let fullContent = "";
+      let thinkingContent = "";
       let sources: Source[] = [];
 
       if (reader) {
@@ -287,16 +322,44 @@ export default function Chat() {
               const data = JSON.parse(line);
               if (data.type === "sources") {
                 sources = data.sources || [];
-              } else if (data.type === "token") {
-                fullContent += data.content;
-                const displayContent = stripThinking(fullContent);
+              } else if (data.type === "thinking") {
+                thinkingContent += data.content;
                 setSessions((prev) =>
                   prev.map((s) => {
                     if (s.id === activeSession.id) {
                       return {
                         ...s,
                         messages: s.messages.map((m) =>
-                          m.id === assistantId ? { ...m, content: displayContent, sources } : m
+                          m.id === assistantId
+                            ? { ...m, thinking: thinkingContent, isThinking: true, sources }
+                            : m
+                        ),
+                      };
+                    }
+                    return s;
+                  })
+                );
+              } else if (data.type === "token") {
+                fullContent += data.content;
+                const extracted = extractThinkingAndAnswer(fullContent);
+                const displayAnswer = extracted.answer || (extracted.thinking ? "" : fullContent);
+                const currentThinking = thinkingContent || extracted.thinking;
+
+                setSessions((prev) =>
+                  prev.map((s) => {
+                    if (s.id === activeSession.id) {
+                      return {
+                        ...s,
+                        messages: s.messages.map((m) =>
+                          m.id === assistantId
+                            ? {
+                                ...m,
+                                content: displayAnswer,
+                                thinking: currentThinking,
+                                isThinking: false,
+                                sources,
+                              }
+                            : m
                         ),
                       };
                     }
@@ -305,6 +368,9 @@ export default function Chat() {
                 );
               } else if (data.type === "answer") {
                 fullContent = data.content;
+                if (data.thinking) {
+                  thinkingContent = data.thinking;
+                }
               } else if (data.type === "error") {
                 fullContent = fullContent
                   ? `${fullContent}\n\n[${data.message}]`
@@ -318,7 +384,10 @@ export default function Chat() {
       }
 
       // Final update to clear streaming state
-      const cleanedFinal = stripThinking(fullContent);
+      const finalExtracted = extractThinkingAndAnswer(fullContent);
+      const cleanedFinal = finalExtracted.answer || stripThinking(fullContent);
+      const finalThinking = thinkingContent || finalExtracted.thinking;
+
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id === activeSession.id) {
@@ -326,7 +395,14 @@ export default function Chat() {
               ...s,
               messages: s.messages.map((m) =>
                 m.id === assistantId
-                  ? { ...m, content: cleanedFinal || "No response received.", sources, isStreaming: false }
+                  ? {
+                      ...m,
+                      content: cleanedFinal || (finalThinking ? "Analysis complete." : "No response received."),
+                      thinking: finalThinking,
+                      isThinking: false,
+                      sources,
+                      isStreaming: false,
+                    }
                   : m
               ),
             };
@@ -583,12 +659,71 @@ export default function Chat() {
                   boxShadow: `0 2px 8px ${C.shadow}`,
                 }}
               >
-                {stripThinking(msg.content) || (msg.isStreaming && (
+                {/* ── Internal Reasoning / Thought Process (shows at beginning, collapsible) ── */}
+                {msg.role === "assistant" && msg.thinking && (
+                  <details
+                    open={msg.isThinking}
+                    style={{
+                      marginBottom: msg.content ? 12 : 0,
+                      padding: "8px 12px",
+                      background: "rgba(139,105,20,0.06)",
+                      border: `1px solid ${C.borderGold}`,
+                      borderRadius: 8,
+                      fontSize: 12.5,
+                      lineHeight: 1.5,
+                      fontFamily: "'Crimson Pro', Georgia, serif",
+                    }}
+                  >
+                    <summary
+                      style={{
+                        cursor: "pointer",
+                        fontWeight: 600,
+                        color: C.gold,
+                        userSelect: "none",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        outline: "none",
+                      }}
+                    >
+                      <span>💭</span>
+                      <span>{msg.isThinking ? "Thinking in progress..." : "View reasoning process"}</span>
+                      {msg.isThinking && (
+                        <span style={{ display: "inline-block", animation: "spin 1.2s linear infinite", fontSize: 11 }}>⟳</span>
+                      )}
+                    </summary>
+                    <div
+                      style={{
+                        marginTop: 8,
+                        paddingTop: 8,
+                        borderTop: "1px dashed rgba(180,160,120,0.3)",
+                        color: C.inkMid,
+                        whiteSpace: "pre-wrap",
+                        maxHeight: 220,
+                        overflowY: "auto",
+                        fontSize: 12,
+                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                        background: "rgba(0,0,0,0.02)",
+                        borderRadius: 4,
+                        padding: "6px 8px",
+                      }}
+                    >
+                      {msg.thinking}
+                    </div>
+                  </details>
+                )}
+
+                {/* ── Grounded Answer (Shows permanently) ── */}
+                {msg.content ? (
+                  <div style={{ whiteSpace: "pre-wrap" }}>
+                    {stripThinking(msg.content)}
+                  </div>
+                ) : msg.isStreaming ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.inkLight }}>
                     <span style={{ display: "inline-block", animation: "spin 1.2s linear infinite" }}>⟳</span>
-                    Searching documents and generating answer...
+                    {msg.isThinking ? "Analyzing documents & reasoning..." : "Searching documents and generating answer..."}
                   </div>
-                ))}
+                ) : null}
               </div>
 
               {/* Sources */}
