@@ -8,7 +8,9 @@ from difflib import SequenceMatcher
 import aiohttp
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from config import settings
 from services.pdf_extractor import extract_text_from_pdf
+from services.scraping_engine import scrape_all_sources
 from services.source_gathering import (
     API_TIMEOUT,
     search_arxiv,
@@ -89,4 +91,26 @@ async def search_papers(
             search_openalex(query, limit=limit, session=session),
         )
     papers = [paper for response, source in zip(responses, ("semantic_scholar", "arxiv", "crossref", "openalex")) for paper in _normalize(response.get("results", []), source)]
+
+    if getattr(settings, "ENABLE_SCRAPING_PIPELINE", True) and len(papers) < limit:
+        try:
+            scraped = await scrape_all_sources(query, use_cache=getattr(settings, "SCRAPER_USE_CACHE", True), max_results_per_source=limit)
+            for sp in scraped:
+                date_str = str(sp.get("publication_date") or "")
+                year_match = re.search(r"\b(19\d\d|20\d\d)\b", date_str)
+                parsed_year = int(year_match.group(1)) if year_match else None
+                authors_str = ", ".join(sp.get("authors") or []) if isinstance(sp.get("authors"), list) else str(sp.get("authors") or "Unknown authors")
+                papers.append({
+                    "title": sp.get("title", "Untitled"),
+                    "authors": authors_str,
+                    "venue": sp.get("source", "Web Scraper"),
+                    "year": parsed_year,
+                    "abstract": sp.get("abstract") or "Abstract unavailable.",
+                    "citations": 0,
+                    "url": sp.get("url", ""),
+                    "source": sp.get("source", "").lower(),
+                })
+        except Exception:
+            pass
+
     return {"query": query, "papers": _dedupe_and_rank(papers, limit)}

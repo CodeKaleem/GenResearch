@@ -25,6 +25,7 @@ from typing import Optional
 import aiohttp
 
 from config import settings
+from services.scraping_engine import scrape_all_sources
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +329,47 @@ async def search_openalex(
             await session.close()
 
 
+def _convert_scraped_paper(paper: dict, is_case_study: bool = False) -> dict:
+    """Transform a normalized scraping engine paper into the source gathering schema."""
+    authors_raw = paper.get("authors") or []
+    if isinstance(authors_raw, list):
+        authors_str = ", ".join(authors_raw)
+    else:
+        authors_str = str(authors_raw)
+
+    raw_date = str(paper.get("publication_date") or "")
+    year = None
+    year_match = re.search(r"\b(19\d\d|20\d\d)\b", raw_date)
+    if year_match:
+        try:
+            year = int(year_match.group(1))
+        except (ValueError, TypeError):
+            year = None
+
+    url = paper.get("url", "")
+    doi = ""
+    if "doi.org/" in url:
+        doi = url.split("doi.org/")[-1].strip()
+
+    abstract = paper.get("abstract", "") or ""
+    source_name = str(paper.get("source", "WebScraper"))
+
+    return {
+        "title": paper.get("title", "Unknown"),
+        "authors": authors_str or "Unknown",
+        "year": year,
+        "url": url,
+        "doi": doi,
+        "abstract_snippet": abstract[:ABSTRACT_SNIPPET_LENGTH],
+        "content": abstract,
+        "citation_count": 0,
+        "source_api": f"scraping_{source_name.lower()}",
+        "source_type": "case_study" if is_case_study else "scraped",
+        "is_case_study": is_case_study,
+        "accessed_date": datetime.utcnow().isoformat(),
+    }
+
+
 async def gather_sources_for_gaps(
     gaps: list[dict],
     existing_sources: list[dict] | None = None,
@@ -373,11 +415,40 @@ async def gather_sources_for_gaps(
 
             gap_sources: list[dict] = []
 
-            # Priority 1: Semantic Scholar
-            res = await search_semantic_scholar(query, limit=sources_per_gap, session=session)
-            if res["status"] == "error":
-                errors.append(res["error"])
-            add_unique_sources(res["results"], gap_sources, gap)
+            # Priority 0: Multi-source Web Scraping Pipeline (arXiv, Crossref, Semantic Scholar, OpenAlex)
+            # Provides resilient fallback for API key approval delays, including real-world stories and case studies
+            if getattr(settings, "SCRAPER_SOURCE_GATHERING", True):
+                try:
+                    scraped_papers = await scrape_all_sources(
+                        query,
+                        use_cache=getattr(settings, "SCRAPER_USE_CACHE", True),
+                        max_results_per_source=sources_per_gap,
+                    )
+                    if scraped_papers:
+                        converted = [_convert_scraped_paper(p, is_case_study=False) for p in scraped_papers]
+                        add_unique_sources(converted, gap_sources, gap)
+
+                    # Gather real-world stories, examples, and empirical case studies if enabled
+                    if getattr(settings, "SCRAPER_ENABLE_CASE_STUDIES", True) and len(gap_sources) < sources_per_gap:
+                        case_query = f"{query} case study practical application"
+                        case_papers = await scrape_all_sources(
+                            case_query,
+                            use_cache=getattr(settings, "SCRAPER_USE_CACHE", True),
+                            max_results_per_source=max(1, sources_per_gap - len(gap_sources)),
+                        )
+                        if case_papers:
+                            converted_cases = [_convert_scraped_paper(p, is_case_study=True) for p in case_papers]
+                            add_unique_sources(converted_cases, gap_sources, gap)
+                except Exception as scrap_exc:
+                    logger.warning("scraping_pipeline_exception", extra={"error": str(scrap_exc), "query": query})
+                    errors.append(f"Scraping error: {str(scrap_exc)}")
+
+            # Priority 1: Semantic Scholar (Fallback if scraping pipeline didn't fill the gap)
+            if len(gap_sources) < sources_per_gap:
+                res = await search_semantic_scholar(query, limit=sources_per_gap - len(gap_sources), session=session)
+                if res["status"] == "error":
+                    errors.append(res["error"])
+                add_unique_sources(res["results"], gap_sources, gap)
 
             # Priority 2: arXiv (if Semantic Scholar didn't fill the gap)
             if len(gap_sources) < sources_per_gap:

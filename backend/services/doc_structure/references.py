@@ -6,6 +6,9 @@ from typing import Iterable
 
 _HEADING_RE = re.compile(r"(?im)(?:^|\n)\s*(?:References|Bibliography|Works Cited|Literature Cited|REFERENCES)\s*$")
 _REFERENCE_MARKER_RE = re.compile(r"(?m)^\s*(?:\[(\d+)\]|(\d+)\.|\((\d+)\))\s+")
+_REF_START_PATTERN = re.compile(
+    r"(?i)(?:\[\s*1\s*\]|\b1\.\s+|\(1\)|[A-Z][a-zA-ZÀ-ÖØ-öø-ÿ'\-]+(?:\s+[A-Z]{1,3}|\s*,\s*[A-Z]{1,3}|,\s+[A-Z]\.?|\s+(?:and|&)\s+[A-Z]|\s+et\s+al\.)*.*?\(\d{4}[a-z]?\))"
+)
 
 
 @dataclass
@@ -46,7 +49,7 @@ def _find_reference_heading(text: str) -> tuple[int, str] | None:
     for heading in reversed(matches):
         start = heading.end()
         window = text[start:start + 800]
-        if re.search(r"(?i)(\[\s*1\s*\]|\b1\.\s+|\(1\)|[A-Z][a-z]+(?:,\s+[A-Z]\.|\s+[A-Z]\.)\s*.*?\(\d{4}\))", window):
+        if _REF_START_PATTERN.search(window):
             return heading.start(), text[start:]
     # Fallback to the last match even if window is short
     heading = matches[-1]
@@ -70,9 +73,11 @@ def _coerce_year(raw: str) -> int | None:
 
 
 def _coerce_doi(raw: str) -> str | None:
-    # Unwrap newlines that break up DOIs across lines in PDFs (with optional indent)
-    cleaned = re.sub(r"(10\.\d{4,9}/[^\s\n]*)\n\s*([^\s\n]+)", r"\1\2", raw)
-    cleaned = cleaned.replace("\u200b", "").replace(" ", "")
+    # Strip zero-width characters only (not regular spaces)
+    cleaned = raw.replace("\u200b", "").replace("\ufeff", "").replace("\u00ad", "")
+    # Unwrap newlines that break up DOIs across lines in PDFs —
+    # only join when the next line continues with DOI-like characters (not author names)
+    cleaned = re.sub(r"(10\.\d{4,9}/[^\s\n]*)\n\s*([^\s\n]*[0-9/.\-]+[^\s\n]*)", r"\1\2", cleaned)
     match = re.search(r"10\.\d{4,9}/[^\s,;\"'<>]+", cleaned, flags=re.IGNORECASE)
     if not match:
         return None
@@ -155,7 +160,9 @@ def _split_numbered_entries(text: str) -> list[str]:
                 seq_matches.append((n, m.start()))
                 expected = n + 1
 
-    chosen_matches = seq_matches if len(seq_matches) >= 2 else [(int(m.group(1) or m.group(2) or m.group(3)), m.start()) for m in matches]
+    if len(seq_matches) < 2:
+        return []
+    chosen_matches = seq_matches
 
     entries: list[str] = []
     for idx in range(len(chosen_matches)):
@@ -179,16 +186,20 @@ def _extract_reference_entries_from_text(text: str) -> list[ReferenceEntry]:
 
     # Recovery pass for inline markers or glued references
     recovered: list[ReferenceEntry] = []
-    for match in re.finditer(r"(?:\[(\d+)\]|(?m)^\s*(\d+)\.)\s*([^\[\n]+(?:\n(?!\s*(?:\[\d+\]|\d+\.))[^\[\n]+)*)", cleaned):
+    marker_pattern = re.compile(
+        r"(?:\[(\d+)\]|^\s*(\d+)\.)\s*([^\[\n]+(?:\n(?!\s*(?:\[\d+\]|\d+\.))[^\[\n]+)*)",
+        re.MULTILINE,
+    )
+    for match in marker_pattern.finditer(cleaned):
         raw = match.group(0).strip()
         if raw:
             recovered.append(_parse_reference_entry(raw))
     if recovered:
         return recovered
 
-    # Unnumbered author-year bibliography pass (e.g. APA / Harvard)
+    # Unnumbered author-year bibliography pass (e.g. APA / Harvard / Nature / Springer)
     author_year_re = re.compile(
-        r"(?m)^\s*([A-Z][a-zA-ZÀ-ÖØ-öø-ÿ'\-]+(?:,\s+[A-Z]\.?|\s+(?:and|&)\s+[A-Z]|\s+et\s+al\.).*?\(\d{4}[a-z]?\))"
+        r"(?m)^\s*([A-Z][a-zA-ZÀ-ÖØ-öø-ÿ'\-]+(?:\s+[A-Z]{1,3}|\s*,\s*[A-Z]{1,3}|,\s+[A-Z]\.?|\s+(?:and|&)\s+[A-Z]|\s+et\s+al\.)*.*?\(\d{4}[a-z]?\))"
     )
     ay_matches = list(author_year_re.finditer(cleaned))
     if len(ay_matches) >= 2:
@@ -234,7 +245,7 @@ def find_reference_section(pages: Iterable[str]) -> tuple[int | None, str]:
         for heading in reversed(matches):
             pos = heading.end()
             chunk = page[pos:pos + 800]
-            if re.search(r"(?i)(\[\s*1\s*\]|\b1\.\s+|\(1\)|[A-Z][a-z]+(?:,\s+[A-Z]\.|\s+[A-Z]\.)\s*.*?\(\d{4}\))", chunk):
+            if _REF_START_PATTERN.search(chunk):
                 combined = [page[pos:]]
                 for following_page in page_texts[idx + 1:]:
                     appendix_match = re.search(r"(?im)^\s*(?:Appendix|Appendices|Index)\b", following_page)

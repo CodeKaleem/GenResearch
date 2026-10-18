@@ -5,5 +5,9 @@
   ],
   "python.autoComplete.extraPaths": [
     "${workspaceFolder}/backend"
-  ]
+  ],
+  "chat.tools.terminal.autoApprove": {
+    ".venv/bin/pytest": true,
+    ".venv/bin/python": true
+  }
 }

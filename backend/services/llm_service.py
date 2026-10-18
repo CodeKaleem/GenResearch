@@ -93,15 +93,63 @@ _THINK_OPEN_TAGS = ["<think>", "<thought>", "<thinking>"]
 _THINK_CLOSE_TAGS = ["</think>", "</thought>", "</thinking>"]
 
 
-def _strip_think_blocks(text: str) -> str:
+def extract_thinking_and_answer(text: str) -> tuple[str, str]:
+    """Separate internal thinking monologue from the user-facing answer.
+
+    Handles both explicit <think>...</think> tags and untagged reasoning preambles
+    (e.g., 'We are given a user question: ...' followed by 'Grounded Answer:').
+    Returns (thinking, answer).
+    """
+    if not text:
+        return "", ""
+    raw = text.strip()
+    thinking_parts: list[str] = []
+
+    # 1. Extract tagged <think> blocks
+    for m in re.finditer(
+        r"<(?:think|thought|thinking)>([\s\S]*?)(?:</(?:think|thought|thinking)>|$)",
+        raw,
+        re.IGNORECASE,
+    ):
+        if m.group(1).strip():
+            thinking_parts.append(m.group(1).strip())
+
     cleaned = re.sub(
         r"<(?:think|thought|thinking)>.*?(?:</(?:think|thought|thinking)>|$)",
         "",
-        text,
+        raw,
         flags=re.IGNORECASE | re.DOTALL,
+    ).strip()
+    cleaned = re.sub(r"</(?:think|thought|thinking)>", "", cleaned, flags=re.IGNORECASE).strip()
+
+    # 2. Extract untagged reasoning preamble if answer marker is present
+    marker_match = re.search(
+        r"(?:^|\n+)(?:(?:Concise|Descriptive)\s+Grounded\s+Answer:|(?:\*\*|\#\#)?\s*Answer:?)\s*",
+        cleaned,
+        flags=re.IGNORECASE,
     )
-    cleaned = re.sub(r"</(?:think|thought|thinking)>", "", cleaned, flags=re.IGNORECASE)
-    return cleaned.strip()
+    if marker_match and marker_match.start() > 0:
+        preamble = cleaned[:marker_match.start()].strip()
+        if preamble:
+            thinking_parts.append(preamble)
+        cleaned = cleaned[marker_match.end():].strip()
+    else:
+        # 3. Check for obvious reasoning preamble at the start
+        preamble_match = re.match(
+            r"^(?:We are given a user question|First,? I need to|Looking at the document excerpts|Let me check the document|Let's analyze the question|The user is asking)[\s\S]*?\n\n",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        if preamble_match:
+            thinking_parts.append(preamble_match.group(0).strip())
+            cleaned = cleaned[preamble_match.end():].strip()
+
+    thinking = "\n\n".join(thinking_parts).strip()
+    return thinking, cleaned
+
+
+def _strip_think_blocks(text: str) -> str:
+    return extract_thinking_and_answer(text)[1]
 
 
 def _partial_tag_suffix_length(text: str, tag: str) -> int:
@@ -112,11 +160,15 @@ def _partial_tag_suffix_length(text: str, tag: str) -> int:
     return 0
 
 
-def _filter_think_chunk(content: str, state: dict, *, final: bool = False) -> str:
+def _filter_stream_events(content: str, state: dict, *, final: bool = False) -> list[tuple[str, str]]:
+    """Stream event splitter that yields ('thinking', chunk) and ('token', chunk)."""
     data = state.get("pending", "") + content
-    output: list[str] = []
+    events: list[tuple[str, str]] = []
+
     while data:
         lowered = data.lower()
+
+        # 1. Inside explicit <think> block
         if state.get("inside_think", False):
             earliest_close = -1
             close_tag_len = 0
@@ -128,16 +180,26 @@ def _filter_think_chunk(content: str, state: dict, *, final: bool = False) -> st
 
             if earliest_close < 0:
                 if final:
+                    if data:
+                        events.append(("thinking", data))
                     state["pending"] = ""
-                    return "".join(output)
+                    return events
                 suffix_length = max((_partial_tag_suffix_length(data, tag) for tag in _THINK_CLOSE_TAGS), default=0)
-                state["pending"] = data[-suffix_length:] if suffix_length else ""
-                return "".join(output)
+                emit_len = len(data) - suffix_length
+                if emit_len > 0:
+                    events.append(("thinking", data[:emit_len]))
+                    data = data[emit_len:]
+                state["pending"] = data
+                return events
 
+            think_text = data[:earliest_close]
+            if think_text:
+                events.append(("thinking", think_text))
             data = data[earliest_close + close_tag_len:]
             state["inside_think"] = False
             continue
 
+        # 2. Check for start of <think> block
         earliest_open = -1
         open_tag_len = 0
         for tag in _THINK_OPEN_TAGS:
@@ -147,23 +209,78 @@ def _filter_think_chunk(content: str, state: dict, *, final: bool = False) -> st
                 open_tag_len = len(tag)
 
         if earliest_open >= 0:
-            output.append(data[:earliest_open])
+            before_think = data[:earliest_open]
+            if before_think:
+                events.append(("token", before_think))
             data = data[earliest_open + open_tag_len:]
             state["inside_think"] = True
             continue
 
+        # 3. Detect untagged reasoning preamble at the start of response
+        if state.get("in_preamble", None) is None:
+            stripped = data.strip().lower()
+            if any(stripped.startswith(p) for p in (
+                "we are given a user question",
+                "first, i need to",
+                "first i need to",
+                "looking at the document excerpts",
+                "let me check the document",
+                "let's analyze the question",
+                "the user is asking",
+            )):
+                state["in_preamble"] = True
+            else:
+                state["in_preamble"] = False
+
+        if state.get("in_preamble", False):
+            marker_match = re.search(
+                r"(?:(?:Concise|Descriptive)\s+Grounded\s+Answer:|(?:\*\*|\#\#)?\s*Answer:?)\s*",
+                data,
+                flags=re.IGNORECASE,
+            )
+            if marker_match:
+                preamble_text = data[:marker_match.start()]
+                if preamble_text:
+                    events.append(("thinking", preamble_text))
+                data = data[marker_match.end():]
+                state["in_preamble"] = False
+                continue
+            else:
+                if final:
+                    events.append(("thinking", data))
+                    state["pending"] = ""
+                    return events
+                suffix_length = max((_partial_tag_suffix_length(data, m) for m in (
+                    "concise grounded answer:", "descriptive grounded answer:", "answer:"
+                )), default=0)
+                emit_len = len(data) - suffix_length
+                if emit_len > 0:
+                    events.append(("thinking", data[:emit_len]))
+                    data = data[emit_len:]
+                state["pending"] = data
+                return events
+
+        # 4. Normal user-facing answer token
         if final:
-            output.append(data)
-            data = ""
+            if data:
+                events.append(("token", data))
             state["pending"] = ""
             break
 
         suffix_length = max((_partial_tag_suffix_length(data, tag) for tag in _THINK_OPEN_TAGS), default=0)
         safe_length = len(data) - suffix_length
-        output.append(data[:safe_length])
-        state["pending"] = data[safe_length:]
+        if safe_length > 0:
+            events.append(("token", data[:safe_length]))
+            data = data[safe_length:]
+        state["pending"] = data
         break
-    return "".join(output)
+
+    return events
+
+
+def _filter_think_chunk(content: str, state: dict, *, final: bool = False) -> str:
+    events = _filter_stream_events(content, state, final=final)
+    return "".join(text for ev_type, text in events if ev_type == "token")
 
 
 def _semaphore(spec: ModelSpec) -> asyncio.Semaphore:
@@ -355,7 +472,8 @@ async def call_llm_stream(
     temperature: float = 0.3,
     max_tokens: int = 2048,
     context_limit: int | None = None,
-) -> AsyncIterator[str]:
+    emit_events: bool = False,
+) -> AsyncIterator[any]:
     chain = get_chain_for_role(agent_role)
     messages = (
         ([{"role": "system", "content": system}] if system else [])
@@ -387,17 +505,33 @@ async def call_llm_stream(
                             if not line:
                                 continue
                             chunk = json.loads(line)
-                            content = chunk.get("message", {}).get("content", "")
-                            visible = _filter_think_chunk(content, think_state)
-                            if visible:
+                            msg_obj = chunk.get("message", {})
+                            native_thinking = msg_obj.get("thinking", "")
+                            if native_thinking:
                                 yielded_content = True
-                                yield visible
+                                if emit_events:
+                                    yield ("thinking", native_thinking)
+
+                            content = msg_obj.get("content", "")
+                            if content:
+                                events = _filter_stream_events(content, think_state)
+                                for ev_type, text in events:
+                                    if text:
+                                        yielded_content = True
+                                        if emit_events:
+                                            yield (ev_type, text)
+                                        elif ev_type == "token":
+                                            yield text
                             if chunk.get("done"):
                                 break
-                        remaining = _filter_think_chunk("", think_state, final=True)
-                        if remaining:
-                            yielded_content = True
-                            yield remaining
+                        remaining_events = _filter_stream_events("", think_state, final=True)
+                        for ev_type, text in remaining_events:
+                            if text:
+                                yielded_content = True
+                                if emit_events:
+                                    yield (ev_type, text)
+                                elif ev_type == "token":
+                                    yield text
             return
         except Exception as error:
             if yielded_content:

@@ -34,22 +34,22 @@ class Settings:
     OLLAMA_HEAVY_MODEL: str = os.getenv("OLLAMA_HEAVY_MODEL", "qwen3:8b")
     OLLAMA_HEAVY_MAX_CONCURRENT: int = int(os.getenv("OLLAMA_HEAVY_MAX_CONCURRENT", "1"))
     OLLAMA_HEAVY_NUM_THREAD: int = int(os.getenv("OLLAMA_HEAVY_NUM_THREAD", "5"))
-    OLLAMA_HEAVY_NUM_GPU: int = int(os.getenv("OLLAMA_HEAVY_NUM_GPU", "0"))
+    OLLAMA_HEAVY_NUM_GPU: int = int(os.getenv("OLLAMA_HEAVY_NUM_GPU", "99"))
 
     # Mid tier
     OLLAMA_MID_MODEL: str = os.getenv("OLLAMA_MID_MODEL", "qwen3:4b-instruct-2507")
     OLLAMA_MID_MAX_CONCURRENT: int = int(os.getenv("OLLAMA_MID_MAX_CONCURRENT", "2"))
     OLLAMA_MID_NUM_THREAD: int = int(os.getenv("OLLAMA_MID_NUM_THREAD", "2"))
-    OLLAMA_MID_NUM_GPU: int = int(os.getenv("OLLAMA_MID_NUM_GPU", "0"))
+    OLLAMA_MID_NUM_GPU: int = int(os.getenv("OLLAMA_MID_NUM_GPU", "99"))
 
     # Light tier
     OLLAMA_LIGHT_MODEL: str = os.getenv("OLLAMA_LIGHT_MODEL", "phi4-mini")
     OLLAMA_LIGHT_MAX_CONCURRENT: int = int(os.getenv("OLLAMA_LIGHT_MAX_CONCURRENT", "2"))
     OLLAMA_LIGHT_NUM_THREAD: int = int(os.getenv("OLLAMA_LIGHT_NUM_THREAD", "1"))
-    OLLAMA_LIGHT_NUM_GPU: int = int(os.getenv("OLLAMA_LIGHT_NUM_GPU", "0"))
-    OLLAMA_HEAVY_CONTEXT: int = int(os.getenv("OLLAMA_HEAVY_CONTEXT", "6000"))
-    OLLAMA_MID_CONTEXT: int = int(os.getenv("OLLAMA_MID_CONTEXT", "8000"))
-    OLLAMA_LIGHT_CONTEXT: int = int(os.getenv("OLLAMA_LIGHT_CONTEXT", "4000"))
+    OLLAMA_LIGHT_NUM_GPU: int = int(os.getenv("OLLAMA_LIGHT_NUM_GPU", "99"))
+    OLLAMA_HEAVY_CONTEXT: int = int(os.getenv("OLLAMA_HEAVY_CONTEXT", "32768"))
+    OLLAMA_MID_CONTEXT: int = int(os.getenv("OLLAMA_MID_CONTEXT", "16384"))
+    OLLAMA_LIGHT_CONTEXT: int = int(os.getenv("OLLAMA_LIGHT_CONTEXT", "8192"))
 
     # Document structure and chat routing
     DOC_STRUCTURE_ON_UPLOAD: bool = os.getenv("DOC_STRUCTURE_ON_UPLOAD", "True").lower() in ("true", "1", "yes")
@@ -83,6 +83,13 @@ class Settings:
     # Academic search APIs, not text generation providers
     SEMANTIC_SCHOLAR_API_KEY: str = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")
     TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
+
+    # Web Scraping Pipeline (resilient fallback for academic source gathering, citations & case studies)
+    ENABLE_SCRAPING_PIPELINE: bool = os.getenv("ENABLE_SCRAPING_PIPELINE", "True").lower() in ("true", "1", "yes")
+    SCRAPER_SOURCE_GATHERING: bool = os.getenv("SCRAPER_SOURCE_GATHERING", "True").lower() in ("true", "1", "yes")
+    SCRAPER_USE_CACHE: bool = os.getenv("SCRAPER_USE_CACHE", "True").lower() in ("true", "1", "yes")
+    SCRAPER_MAX_RESULTS_PER_SOURCE: int = int(os.getenv("SCRAPER_MAX_RESULTS_PER_SOURCE", "5"))
+    SCRAPER_ENABLE_CASE_STUDIES: bool = os.getenv("SCRAPER_ENABLE_CASE_STUDIES", "True").lower() in ("true", "1", "yes")
 
 
 settings = Settings()
