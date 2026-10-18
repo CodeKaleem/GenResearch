@@ -1,5 +1,6 @@
 """Regression coverage for Task 10 reporting and data-contract fixes."""
 import asyncio
+import hashlib
 import logging
 
 from docx import Document
@@ -141,9 +142,13 @@ def test_source_gathering_handles_none_titles_without_crashing(monkeypatch):
     async def no_sources(query, limit=5, session=None):
         return {"status": "success", "results": []}
 
-    async def no_sleep(delay):
+    async def no_scrape(*args, **kwargs):
+        return []
+
+    async def no_sleep(*args, **kwargs):
         return None
 
+    monkeypatch.setattr(source_gathering, "scrape_all_sources", no_scrape)
     monkeypatch.setattr(source_gathering, "search_semantic_scholar", one_source)
     monkeypatch.setattr(source_gathering, "search_arxiv", no_sources)
     monkeypatch.setattr(source_gathering, "search_crossref", no_sources)
@@ -161,32 +166,122 @@ def test_source_gathering_handles_none_titles_without_crashing(monkeypatch):
     assert not errors
 
 
+def test_source_gathering_with_scraping_engine_and_case_studies(monkeypatch):
+    async def fake_scraped_sources(query, use_cache=True, max_results_per_source=5):
+        if "case study" in query:
+            return [{
+                "source": "arXiv",
+                "title": "Industrial Case Study on Graph Neural Networks",
+                "authors": ["Alice Smith", "Bob Jones"],
+                "abstract": "We present an empirical real-world case study deploying GNNs in fraud detection.",
+                "url": "https://arxiv.org/abs/2401.00001",
+                "publication_date": "2024-01-15",
+            }]
+        return [{
+            "source": "Crossref",
+            "title": "Foundations of Graph Neural Networks",
+            "authors": ["Carol White"],
+            "abstract": "A foundational analysis of graph neural network architectures.",
+            "url": "https://doi.org/10.1000/example.doi",
+            "publication_date": "2023",
+        }]
+
+    async def no_sleep(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(source_gathering, "scrape_all_sources", fake_scraped_sources)
+    monkeypatch.setattr(source_gathering.asyncio, "sleep", no_sleep)
+
+    found, unfilled, errors = asyncio.run(
+        source_gathering.gather_sources_for_gaps(
+            [{"topic": "Graph Neural Networks", "search_query": "Graph Neural Networks"}],
+            sources_per_gap=2,
+        )
+    )
+
+    assert len(found) == 2
+    assert any(s["source_api"] == "scraping_crossref" for s in found)
+    assert any(s["is_case_study"] for s in found)
+    assert not unfilled
+    assert not errors
+
+
 def test_literature_review_keeps_top_chunks_per_paper(monkeypatch):
     seen_prompt = []
+    seen_queries = []
     distances = {"paper-1": 0.0, "paper-2": 0.3, "paper-3": 0.6}
 
     async def fake_search(user_id, query, top_k, paper_id):
+        seen_queries.append(query)
         return [{
             "id": f"{paper_id}-{index}",
             "paper_id": paper_id,
             "title": f"Paper {paper_id}",
-            "text": f"Evidence from {paper_id}, chunk {index}.",
+            "metadata": {"authors": "Smith, J.", "year": 2024},
+                "text": f"Evidence from {paper_id}, {query}, chunk {index}.",
             "distance": distances[paper_id] + index / 1000,
         } for index in range(10)]
 
     async def fake_llm(*args, **kwargs):
         seen_prompt.append(kwargs["prompt"])
-        return "Review text"
+        if "Audit the draft" in kwargs["prompt"]:
+            source_id = "CR-" + hashlib.sha256(b"paper-1").hexdigest()[:12].upper()
+            return (
+                '{"issues": [], "corrected_review": "## Introduction\\n'
+                f'Evidence from this paper demonstrates significant clinical benefit [{source_id}]. '
+                'Another finding remains entirely unsupported by any literature cited."}'
+            )
+        if "Extract bibliographic metadata" in kwargs["prompt"]:
+            return '{"sources": []}'
+        return "Draft review"
+
+    async def fake_records(user_id, paper_ids):
+        return {
+            paper_id: {
+                "id": paper_id,
+                "title": f"Paper {paper_id}",
+                "authors": "Smith, J.",
+                "year": 2024,
+                "file_name": f"{paper_id}.pdf",
+            }
+            for paper_id in paper_ids
+        }
 
     monkeypatch.setattr("services.agents.literature_review_agent.semantic_search", fake_search)
     monkeypatch.setattr("services.agents.literature_review_agent.call_llm", fake_llm)
+    monkeypatch.setattr("services.agents.literature_review_agent._load_paper_records", fake_records)
     result = asyncio.run(
         run_literature_review("user-1", ["paper-1", "paper-2", "paper-3"])
     )
 
+    review_prompt = next(prompt for prompt in seen_prompt if "SOURCE KEY" in prompt)
     for paper_id in ("paper-1", "paper-2", "paper-3"):
-        assert f"[Paper: Paper {paper_id}" in seen_prompt[0]
+        assert f"Paper {paper_id}" in review_prompt
+    assert len(seen_queries) == 21
+    assert any("methodology" in query for query in seen_queries)
+    assert any("limitations" in query for query in seen_queries)
+    assert any("adoption determinants" in query for query in seen_queries)
+    assert any("journal DOI" in query for query in seen_queries)
     assert result["papers_analyzed"] == 3
+    assert result["chunks_used"] == 12
+    assert "(Smith, 2024)" in result["review"]
+    assert "## References" in result["review"]
+    assert result["verification"]["completed"] is True
+    assert "[CITATION NEEDED]" in result["review"]
+    assert result["citation_quality"]["uncited_sentences"] == 1
+    assert result["citation_quality"]["coverage"] < 1
+    assert result["citation_quality"]["sources_cited"] == 1
+    assert len(result["citation_quality"]["sources_uncited"]) == 2
+
+
+def test_literature_review_citation_ids_are_stable_for_each_paper():
+    from services.agents.literature_review_agent import _paper_metadata
+
+    chunk = {"title": "A verifiable title", "metadata": {}}
+    first = _paper_metadata([chunk], "paper-id-a")
+    second = _paper_metadata([chunk], "paper-id-b")
+    assert first["id"] == _paper_metadata([chunk], "paper-id-a")["id"]
+    assert first["id"] != second["id"]
 
 
 def test_proposal_review_keeps_original_when_rewrite_is_too_short(monkeypatch):

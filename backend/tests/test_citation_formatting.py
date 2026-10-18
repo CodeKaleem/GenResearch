@@ -119,6 +119,56 @@ def test_resolve_and_append_references_flags_unverified_freeform_citations():
     assert "(Tay et al., 2022)" in result
 
 
+def test_stable_source_tag_and_full_journal_reference_resolve():
+    source_id = "CR-012345ABCDEF"
+    entry = {
+        "id": source_id,
+        "title": "A Verifiable Study",
+        "authors": "Smith, J., Jones, A.",
+        "year": 2024,
+        "journal": "Journal of Applied Research",
+        "volume": "12",
+        "issue": "3",
+        "pages": "45-59",
+        "doi": "10.1234/example.2024.1",
+    }
+
+    result = resolve_and_append_references(f"Claim [{source_id}].", [entry])
+
+    assert "(Smith & Jones, 2024)" in result
+    assert "*Journal of Applied Research*, *12*(3), 45-59." in result
+    assert "https://doi.org/10.1234/example.2024.1" in result
+
+
+def test_extracted_full_names_are_formatted_as_apa_initials():
+    reference = format_apa_reference({
+        "title": "A Verifiable Study",
+        "authors": "Elin Roos, Axel Mie",
+        "year": 2018,
+    })
+
+    assert reference.startswith("Roos, E., & Mie, A. (2018).")
+
+
+def test_stable_source_tags_resolve_case_insensitively():
+    source_id = "CR-012345ABCDEF"
+    registry = [{"id": source_id, "title": "A Study", "authors": "Smith, J.", "year": 2024}]
+
+    assert "(Smith, 2024)" in resolve_in_text_citations("Claim [cr-012345abcdef].", registry)
+
+
+def test_common_citation_placeholders_are_flagged():
+    from services.citation_formatting import flag_placeholder_template_syntax
+
+    result = flag_placeholder_template_syntax(
+        "Intro [citation] and synthesis (Author, Year); conclusion [CR-00X]."
+    )
+
+    assert result.count("[CITATION NEEDED]") == 3
+    assert "[citation]" not in result
+    assert "[CR-00X]" not in result
+
+
 def test_grounding_gate_allows_supported_specifics_and_flags_invented_case_details():
     evidence = {
         "CR-001": "The study by Insilico Medicine evaluated ISM001 in 2021 and reported 60 percent improvement."

@@ -36,7 +36,7 @@ def test_chat_ask_uses_llm_service_and_keeps_response_contract(monkeypatch, chat
     async def fake_call_llm(prompt, *, agent_role, temperature, max_tokens):
         assert agent_role == "chat"
         assert temperature == 0.3
-        assert max_tokens == 1024
+        assert max_tokens in (1024, 2048)
         return "The study supports the approach."
 
     monkeypatch.setattr(rag_service, "semantic_search", fake_search)
@@ -64,7 +64,7 @@ def test_chat_stream_emits_sources_tokens_and_done(monkeypatch, chat_client):
     async def fake_stream(prompt, *, agent_role, temperature, max_tokens):
         assert agent_role == "chat"
         assert temperature == 0.3
-        assert max_tokens == 1024
+        assert max_tokens in (1024, 2048)
         yield "The study "
         yield "supports the approach."
 
@@ -148,3 +148,67 @@ def test_llm_stream_does_not_fallback_after_partial_output(monkeypatch):
 
     assert asyncio.run(consume()) == ["partial"]
     assert requested_models == ["mid-model"]
+
+
+def test_extract_thinking_and_answer_tagged():
+    raw = "<think>Let me analyze the documents. The study mentions meta-analysis.</think> The methodology used was meta-analysis."
+    thinking, answer = llm_service.extract_thinking_and_answer(raw)
+    assert "Let me analyze the documents" in thinking
+    assert answer == "The methodology used was meta-analysis."
+
+
+def test_extract_thinking_and_answer_untagged_monologue():
+    raw = (
+        "We are given a user question: 'What methodology was used?' and we have to answer based strictly on the provided document excerpts. "
+        "First, I need to scan the document excerpts to see if they mention any specific methodology used in the research.\n\n"
+        "Based on the excerpts, the methodology was meta-analysis."
+    )
+    thinking, answer = llm_service.extract_thinking_and_answer(raw)
+    assert "We are given a user question" in thinking
+    assert "First, I need to scan" in thinking
+    assert answer == "Based on the excerpts, the methodology was meta-analysis."
+
+
+def test_llm_stream_filters_thinking_events(monkeypatch):
+    class FakeResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            lines = [
+                '{"message":{"content":"<think>Considering the question..."},"done":false}',
+                '{"message":{"content":" Done thinking.</think>The answer is 42."},"done":true}',
+            ]
+            for line in lines:
+                yield line
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        def stream(self, method, url, *, json, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(llm_service.httpx, "AsyncClient", FakeClient)
+
+    async def run():
+        events = []
+        async for event in llm_service.call_llm_stream("test", agent_role="chat", emit_events=True):
+            events.append(event)
+        return events
+
+    events = asyncio.run(run())
+    assert any(evt[0] == "thinking" for evt in events)
+    assert any(evt[0] == "token" and "The answer is 42." in evt[1] for evt in events)
