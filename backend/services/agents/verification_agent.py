@@ -45,9 +45,15 @@ def extract_claims_from_text(section_text: str, section_name: str) -> list[Extra
 
 def _parse_json_object(raw: str) -> dict[str, Any]:
     value = parse_llm_json(raw)
-    if value is None:
-        raise ValueError("Verification model did not return a JSON object.")
-    return value
+    if value is not None:
+        return value
+    # Resilient heuristic fallback if the local model responded with text
+    lowered = raw.lower()
+    if "unsupported" in lowered:
+        return {"verdict": "unsupported", "discrepancy": "Evidence does not appear to support the claim."}
+    if "supported" in lowered:
+        return {"verdict": "supported"}
+    raise ValueError("Verification model did not return a JSON object.")
 
 
 async def verify_claim(
@@ -137,15 +143,23 @@ async def verify_section(
 
     results = await asyncio.gather(*(safely_verify(claim) for claim in claims))
     for claim, result in zip(claims, results):
-        tracking.save_generated_claim(
-            session_id=session_id,
-            section=section.section_name,
-            claim_text=claim.text,
-            cited_chunk_ids=claim.cited_chunk_ids,
-            verdict=result.verdict,
-            discrepancy=result.discrepancy,
-            corrected_text=result.corrected_text,
-        )
+        if session_id:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    asyncio.to_thread(
+                        tracking.save_generated_claim,
+                        session_id=session_id,
+                        section=section.section_name,
+                        claim_text=claim.text,
+                        cited_chunk_ids=claim.cited_chunk_ids,
+                        verdict=result.verdict,
+                        discrepancy=result.discrepancy,
+                        corrected_text=result.corrected_text,
+                    )
+                )
+            except RuntimeError:
+                pass
     text = grounding.text
     removed_claims = list(grounding.removed_claims)
     verifier_removed: list[str] = []

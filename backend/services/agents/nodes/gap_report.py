@@ -78,7 +78,7 @@ Produce the gap report JSON now:"""
         agent_role="gap_report",
         system=GAP_REPORT_SYSTEM,
         temperature=0.2,
-        max_tokens=2000,
+        max_tokens=2500,
     )
 
     gap_data = parse_llm_json(raw)

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { C, bodyText, cardBase, headingStyle, sectionLabel } from "./theme";
+import { getCurrentUserId, saveDiscoverySearchResult, type DiscoverySearchPayload } from "../../lib/db";
 
 type SearchMode = "topic" | "document";
 
@@ -49,8 +50,25 @@ export default function FindPapers() {
       const response = await fetch(`${API_BASE}/search-papers`, { method: "POST", body: form });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Search failed.");
-      setResults(data.papers || []);
-      setStatus(data.papers?.length ? "" : "No papers were found for this search.");
+      const papers: PaperResult[] = data.papers || [];
+      setResults(papers);
+      setStatus(papers.length ? "" : "No papers were found for this search.");
+      const query = data.query || (mode === "topic" ? topic.trim() : file?.name || "Document search");
+      const payload: DiscoverySearchPayload = {
+        kind: "discovery_search",
+        category: "research_papers",
+        query,
+        records: papers,
+        reports: { all: "", byStudy: {} },
+      };
+      const userId = await getCurrentUserId();
+      if (userId) {
+        try {
+          await saveDiscoverySearchResult(userId, `Research Papers: ${query}`, payload);
+        } catch {
+          setStatus("Search finished, but could not save it to Results.");
+        }
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Search failed. Check that the API is running.");
     } finally {

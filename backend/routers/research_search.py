@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from difflib import SequenceMatcher
+from typing import Literal
 
 import aiohttp
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 
 from config import settings
 from services.pdf_extractor import extract_text_from_pdf
@@ -21,6 +24,35 @@ from services.source_gathering import (
 
 router = APIRouter(tags=["research search"])
 MAX_DISCOVERY_DOCUMENT_BYTES = 25 * 1024 * 1024
+
+
+class CaseStudySearchRequest(BaseModel):
+    topic: str = Field(min_length=3, max_length=1200)
+    limit: int = Field(default=10, ge=1, le=20)
+
+
+class CaseStudyReportSource(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    authors: str = Field(default="Unknown authors", max_length=1000)
+    year: int | None = None
+    venue: str = Field(default="", max_length=500)
+    abstract: str = Field(default="", max_length=3000)
+    doi: str = Field(default="", max_length=300)
+    url: str = Field(default="", max_length=2000)
+    source: str = Field(default="Unknown source", max_length=200)
+
+
+class CaseStudyReportRequest(BaseModel):
+    topic: str = Field(min_length=3, max_length=1200)
+    studies: list[CaseStudyReportSource] = Field(min_length=1, max_length=20)
+    report_type: Literal["single", "all"] = "all"
+
+
+def _case_study_query(topic: str) -> str:
+    normalized = re.sub(r"\s+", " ", topic).strip()
+    if re.search(r"\bcase stud(?:y|ies)\b", normalized, re.IGNORECASE):
+        return normalized
+    return f"{normalized} case study"
 
 
 async def _query_from_document(document: UploadFile) -> str:
@@ -114,3 +146,116 @@ async def search_papers(
             pass
 
     return {"query": query, "papers": _dedupe_and_rank(papers, limit)}
+
+
+@router.post("/search-case-studies")
+async def search_case_studies(req: CaseStudySearchRequest):
+    """Gather case-study candidates from the configured multi-source scrapers."""
+    topic = re.sub(r"\s+", " ", req.topic).strip()
+    query = _case_study_query(topic)
+
+    try:
+        scraped = await scrape_all_sources(
+            query,
+            use_cache=settings.SCRAPER_USE_CACHE,
+            max_results_per_source=req.limit,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=502, detail="Case-study search is temporarily unavailable.") from error
+
+    candidates = []
+    for item in scraped:
+        publication_date = str(item.get("publication_date") or "")
+        year_match = re.search(r"\b(19\d{2}|20\d{2})\b", publication_date)
+        authors = item.get("authors") or []
+        candidates.append({
+            "title": item.get("title") or "Untitled study",
+            "authors": ", ".join(authors) if isinstance(authors, list) else str(authors),
+            "year": int(year_match.group(1)) if year_match else None,
+            "venue": item.get("journal") or item.get("venue") or "",
+            "abstract": item.get("abstract") or "Abstract unavailable from this source.",
+            "doi": item.get("doi") or "",
+            "url": item.get("url") or "",
+            "source": item.get("source") or "Unknown source",
+            "keywords": item.get("keywords") or [],
+            "candidate": True,
+        })
+
+    ranked = _dedupe_and_rank(
+        [{**candidate, "citations": 0} for candidate in candidates], req.limit
+    )
+    return {"topic": topic, "query": query, "case_studies": ranked}
+
+
+@router.post("/generate-case-study-report")
+async def generate_case_study_report(req: CaseStudyReportRequest):
+    """Create a cited synthesis using only metadata and abstracts from search results."""
+    from services.llm_service import call_llm
+
+    if req.report_type == "single" and len(req.studies) != 1:
+        raise HTTPException(status_code=422, detail="A single-paper summary requires exactly one study.")
+
+    source_records = []
+    for index, study in enumerate(req.studies, start=1):
+        source_records.append({
+            "citation_id": f"CS-{index:02d}",
+            "title": study.title,
+            "authors": study.authors,
+            "year": study.year,
+            "venue": study.venue,
+            "abstract": study.abstract[:600],
+        })
+
+    if req.report_type == "single":
+        writing_instruction = (
+            "Write a concise structured summary of this one study: purpose or context, "
+            "approach, reported findings, and limitations, but only where the supplied "
+            "abstract supports those details. Cite factual statements with [CS-01]."
+        )
+    else:
+        writing_instruction = (
+            "Write a general report with an overview, cross-study themes and contrasts, and "
+            "a concise discussion. Mention and cite EVERY supplied study at least once using "
+            "its exact [CS-##] ID. Include a short subsection for each study, and compare "
+            "findings only when the abstracts support the comparison."
+        )
+
+    prompt = (
+        f"Research topic or description: {req.topic.strip()}\n\n"
+        "Searched source records (the abstract is the only study content available):\n"
+        f"{json.dumps(source_records, ensure_ascii=True, indent=2)}\n\n"
+        f"{writing_instruction} Do not invent locations, sample sizes, methods, outcomes, "
+        "dates, or causal claims. If an abstract does not establish that a record is a case "
+        "study, describe it as a related study rather than a confirmed case study. Do not "
+        "create a reference list; source evidence will be appended separately."
+    )
+    report = await call_llm(
+        prompt=prompt,
+        agent_role="summarization",
+        system=(
+            "You are an evidence-grounded academic research writer. Use only details explicitly "
+            "present in the supplied source records. Be clear when evidence is incomplete. "
+            "Return readable Markdown and no fabricated citations."
+        ),
+        temperature=0.1,
+        max_tokens=2800,
+    )
+
+    examples = ["## Individual study examples and source evidence"]
+    for index, study in enumerate(req.studies, start=1):
+        citation_id = f"CS-{index:02d}"
+        example = f"### [{citation_id}] {study.title}\n{study.authors} ({study.year or 'n.d.'})"
+        if study.venue:
+            example += f" · {study.venue}"
+        example += f" · Source: {study.source}\n\n"
+        example += study.abstract.strip() or "Abstract unavailable; consult the linked source for details."
+        link = study.doi or study.url
+        if link:
+            example += f"\n\nSource link: {link if link.startswith('http') else f'https://doi.org/{link}'}"
+        examples.append(example)
+
+    return {
+        "topic": req.topic.strip(),
+        "report_type": req.report_type,
+        "report": f"{report.strip()}\n\n" + "\n\n".join(examples),
+    }

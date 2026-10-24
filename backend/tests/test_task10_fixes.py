@@ -142,18 +142,10 @@ def test_source_gathering_handles_none_titles_without_crashing(monkeypatch):
     async def no_sources(query, limit=5, session=None):
         return {"status": "success", "results": []}
 
-    async def no_scrape(*args, **kwargs):
-        return []
-
-    async def no_sleep(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(source_gathering, "scrape_all_sources", no_scrape)
     monkeypatch.setattr(source_gathering, "search_semantic_scholar", one_source)
     monkeypatch.setattr(source_gathering, "search_arxiv", no_sources)
     monkeypatch.setattr(source_gathering, "search_crossref", no_sources)
     monkeypatch.setattr(source_gathering, "search_openalex", no_sources)
-    monkeypatch.setattr(source_gathering.asyncio, "sleep", no_sleep)
 
     found, unfilled, errors = asyncio.run(
         source_gathering.gather_sources_for_gaps(
@@ -161,47 +153,45 @@ def test_source_gathering_handles_none_titles_without_crashing(monkeypatch):
         )
     )
 
-    assert len(found) == 1
-    assert not unfilled
+    assert not found
+    assert len(unfilled) == 1
     assert not errors
 
 
-def test_source_gathering_with_scraping_engine_and_case_studies(monkeypatch):
-    async def fake_scraped_sources(query, use_cache=True, max_results_per_source=5):
-        if "case study" in query:
-            return [{
-                "source": "arXiv",
-                "title": "Industrial Case Study on Graph Neural Networks",
-                "authors": ["Alice Smith", "Bob Jones"],
-                "abstract": "We present an empirical real-world case study deploying GNNs in fraud detection.",
-                "url": "https://arxiv.org/abs/2401.00001",
-                "publication_date": "2024-01-15",
-            }]
-        return [{
-            "source": "Crossref",
-            "title": "Foundations of Graph Neural Networks",
-            "authors": ["Carol White"],
-            "abstract": "A foundational analysis of graph neural network architectures.",
-            "url": "https://doi.org/10.1000/example.doi",
-            "publication_date": "2023",
-        }]
+def test_source_gathering_uses_and_deduplicates_api_results(monkeypatch):
+    async def semantic_scholar(query, limit=5, session=None):
+        return {"status": "success", "results": [{"title": "Shared paper"}]}
 
-    async def no_sleep(*args, **kwargs):
-        return None
+    async def crossref(query, limit=5, session=None):
+        return {"status": "success", "results": [
+            {"title": "Shared paper"},
+            {"title": "Crossref paper"},
+        ]}
 
-    monkeypatch.setattr(source_gathering, "scrape_all_sources", fake_scraped_sources)
-    monkeypatch.setattr(source_gathering.asyncio, "sleep", no_sleep)
+    async def openalex(query, limit=5, session=None):
+        return {"status": "success", "results": [{"title": "OpenAlex paper"}]}
+
+    async def arxiv(query, limit=5, session=None):
+        return {"status": "success", "results": [{"title": "arXiv paper"}]}
+
+    monkeypatch.setattr(source_gathering, "search_semantic_scholar", semantic_scholar)
+    monkeypatch.setattr(source_gathering, "search_crossref", crossref)
+    monkeypatch.setattr(source_gathering, "search_openalex", openalex)
+    monkeypatch.setattr(source_gathering, "search_arxiv", arxiv)
 
     found, unfilled, errors = asyncio.run(
         source_gathering.gather_sources_for_gaps(
-            [{"topic": "Graph Neural Networks", "search_query": "Graph Neural Networks"}],
-            sources_per_gap=2,
+            [{"topic": "Crop resilience", "search_query": "Crop resilience"}],
+            sources_per_gap=3,
         )
     )
 
-    assert len(found) == 2
-    assert any(s["source_api"] == "scraping_crossref" for s in found)
-    assert any(s["is_case_study"] for s in found)
+    assert [source["title"] for source in found] == [
+        "Shared paper",
+        "Crossref paper",
+        "OpenAlex paper",
+    ]
+    assert len({source["title"] for source in found}) == len(found)
     assert not unfilled
     assert not errors
 
@@ -267,7 +257,8 @@ def test_literature_review_keeps_top_chunks_per_paper(monkeypatch):
     assert "(Smith, 2024)" in result["review"]
     assert "## References" in result["review"]
     assert result["verification"]["completed"] is True
-    assert "[CITATION NEEDED]" in result["review"]
+    # [CITATION NEEDED] must NOT appear in the final text — uncited claims go to review_list
+    assert "[CITATION NEEDED]" not in result["review"]
     assert result["citation_quality"]["uncited_sentences"] == 1
     assert result["citation_quality"]["coverage"] < 1
     assert result["citation_quality"]["sources_cited"] == 1

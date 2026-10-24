@@ -64,6 +64,7 @@ def _request_payload(
     temperature: float,
     max_tokens: int,
     context_limit: int | None,
+    json_mode: bool = False,
 ) -> dict:
     options = {
         "temperature": temperature,
@@ -86,6 +87,8 @@ def _request_payload(
         payload["keep_alive"] = settings.OLLAMA_KEEP_ALIVE
     if spec.think is not None:
         payload["think"] = spec.think
+    if json_mode:
+        payload["format"] = "json"
     return payload
 
 
@@ -307,6 +310,7 @@ async def _call_ollama_once(
     max_tokens: int,
     context_limit: int | None = None,
     read_timeout: float | None = None,
+    json_mode: bool = False,
 ) -> tuple[str, dict]:
     payload = {
         **_request_payload(
@@ -316,6 +320,7 @@ async def _call_ollama_once(
             temperature=temperature,
             max_tokens=max_tokens,
             context_limit=context_limit,
+            json_mode=json_mode,
         )
     }
 
@@ -381,6 +386,18 @@ def _track_in_background(**kwargs) -> None:
     task.add_done_callback(_background_tasks.discard)
 
 
+# Roles whose output is always JSON — Ollama format: json will be set automatically
+_JSON_ROLES: frozenset[str] = frozenset({
+    "sufficiency_evaluator",
+    "gap_report",
+    "outline_plan",
+    "source_quality_evaluator",
+    "user_doc_quality_eval",
+    "citation_verification",
+    "verification",
+})
+
+
 async def call_llm(
     prompt: str,
     *,
@@ -389,7 +406,11 @@ async def call_llm(
     temperature: float = 0.3,
     max_tokens: int = 2048,
     context_limit: int | None = None,
+    json_mode: bool | None = None,
 ) -> str:
+    """Call the LLM for a given role. json_mode=None auto-detects from _JSON_ROLES."""
+    if json_mode is None:
+        json_mode = agent_role in _JSON_ROLES
     chain = get_chain_for_role(agent_role)
     messages = (
         ([{"role": "system", "content": system}] if system else [])
@@ -412,6 +433,7 @@ async def call_llm(
                     "context_limit": effective_context,
                 },
             )
+        attempt_started_at = time.perf_counter()
         try:
             logger.info(
                 "llm_request",
@@ -423,13 +445,17 @@ async def call_llm(
             )
             read_timeout = _read_timeout_for_role(agent_role)
             extra = {"read_timeout": read_timeout} if read_timeout is not None else {}
-            result, usage = await _call_ollama_once(spec, messages, temperature, max_tokens, context_limit, **extra)
+            result, usage = await _call_ollama_once(
+                spec, messages, temperature, max_tokens, context_limit,
+                json_mode=json_mode, **extra
+            )
             logger.info(
                 "llm_response",
                 extra={
                     "agent_role": agent_role,
                     "tier": spec.key,
                     "response_length": len(result),
+                    "latency_ms": int((time.perf_counter() - attempt_started_at) * 1000),
                 },
             )
             _track_in_background(

@@ -20,7 +20,7 @@ def _tokenize(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-zA-Z]{3,}", text.lower()) if w not in _STOPWORDS}
 
 
-def _select_relevant_sources(section_name: str, guidance: str, registry: list[dict], limit: int = 3) -> list[dict]:
+def _select_relevant_sources(section_name: str, guidance: str, registry: list[dict], limit: int = 6) -> list[dict]:
     """
     Pick the registry entries most relevant to THIS section, instead of
     handing every section the same top-N slice of the registry regardless
@@ -41,13 +41,18 @@ def _select_relevant_sources(section_name: str, guidance: str, registry: list[di
     section_tokens = _tokenize(f"{section_name} {guidance}")
     if not section_tokens:
         return list(registry[:limit])
+    case_study_section = "case stud" in f"{section_name} {guidance}".lower()
 
     scored = []
     for source in registry:
         source_text = f"{source.get('title', '')} {source.get('abstract_snippet', '')}"
         overlap = len(section_tokens & _tokenize(source_text))
         if overlap > 0:
-            scored.append((overlap, source))
+            case_study_match = (
+                case_study_section
+                and source.get("source_category") == "case_study_candidate"
+            )
+            scored.append((case_study_match, overlap, source))
 
     if not scored:
         # No keyword overlap — usually because the registry entry has no
@@ -57,12 +62,12 @@ def _select_relevant_sources(section_name: str, guidance: str, registry: list[di
         # fall back to the full eligible registry capped at the same limit.
         return list(registry[:limit])
 
-    scored.sort(key=lambda pair: pair[0], reverse=True)
-    return [source for _, source in scored[:limit]]
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [source for _, _, source in scored[:limit]]
 
 
 def _sources_from_hits(
-    hits: list[dict], registry: list[dict], limit: int = 4
+    hits: list[dict], registry: list[dict], limit: int = 6
 ) -> list[dict]:
     """Rank distinct registry sources by their best section-retrieval distance."""
     eligible = {
@@ -113,7 +118,29 @@ async def context_build_node(state: dict) -> dict:
     registry = state.get("citation_registry", [])
     topic = state.get("topic", "")
     session_id = state.get("session_id", "")
-    sections = outline.get("sections", [])
+    sections = list(outline.get("sections", []))
+    has_case_study_evidence = any(
+        source.get("source_category") == "case_study_candidate"
+        and source.get("evidence_level") != "none"
+        for source in registry
+    )
+    has_case_study_section = any(
+        "case stud" in str(section.get("name", "")).lower()
+        for section in sections
+    )
+    if has_case_study_evidence and not has_case_study_section:
+        sections.append({
+            "name": "Case Study Evidence",
+            "subsections": ["Documented Case Examples", "Evidence and Context"],
+            "needs": "Retrieved source text that documents relevant case-study examples",
+            "guidance": (
+                "Use only case details explicitly documented in assigned sources. "
+                "If a candidate source does not confirm it is a case study, do not "
+                "present it as one. Describe each example within its stated scope."
+            ),
+            "word_count_target": 500,
+        })
+        outline = {**outline, "sections": sections}
 
     if not sections:
         return {
@@ -130,6 +157,17 @@ async def context_build_node(state: dict) -> dict:
     eligible_registry = [
         source for source in registry if source.get("evidence_level") != "none"
     ]
+    dropped_none_sources = [
+        source for source in registry if source.get("evidence_level") == "none"
+    ]
+    if dropped_none_sources:
+        titles = ", ".join(f"'{s.get('title', 'Unknown')}'" for s in dropped_none_sources)
+        flagged_items.append({
+            "node": "context_build",
+            "issue": f"{len(dropped_none_sources)} source(s) were dropped because no extractable text or abstract was found (evidence_level='none'): {titles}.",
+            "action_required": "Please supply full text or re-upload these documents so they can be cited.",
+            "dropped_sources": dropped_none_sources,
+        })
     global_hits = await semantic_search_session(
         session_id=session_id, query=topic, top_k=10
     ) if session_id and eligible_registry else []
@@ -151,7 +189,7 @@ async def context_build_node(state: dict) -> dict:
             if global_sources:
                 assigned_sources = global_sources
             elif is_synthesis:
-                assigned_sources = eligible_registry[:4]
+                assigned_sources = eligible_registry[:6]
             else:
                 assigned_sources = _select_relevant_sources(
                     section_name, guidance, registry
@@ -200,12 +238,15 @@ async def context_build_node(state: dict) -> dict:
         section_contexts.append(context)
 
     return {
+        "outline": outline,
         "section_contexts": section_contexts,
         "figure_slots": figure_slots,
         "flagged_items": flagged_items,
+        "dropped_none_sources": dropped_none_sources,
         "current_step": "context_build",
         "status": "running",
         "steps_log": [
             f"✓ Built section context for {len(section_contexts)} sections with {len(figure_slots)} figure placeholders"
+            + (f" ({len(dropped_none_sources)} empty sources dropped)" if dropped_none_sources else "")
         ],
     }

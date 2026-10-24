@@ -9,6 +9,7 @@ import Citations from "./Citations";
 import Library from "./Library";
 import Settings from "./Settings";
 import FindPapers from "./FindPapers";
+import CaseStudies from "./CaseStudies";
 import { supabase } from "../../lib/supabase";
 import { 
   getProfile, 
@@ -215,6 +216,7 @@ function AgentUsageRow({ label, pct, color, count }: { label: string; pct: numbe
 
 export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => void }) {
   const [activeNav, setActiveNav] = useState("Dashboard");
+  const [focusedResultTaskId, setFocusedResultTaskId] = useState<string | null>(null);
   const [greeting, setGreeting] = useState("Good morning");
   const [user, setUser] = useState<{ name: string; institution: string } | null>(null);
   const [dbTasks, setDbTasks] = useState<DBTask[]>([]);
@@ -286,10 +288,16 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
     proposal: "Proposal Drafting Agent",
   };
 
+  const getTaskAgentLabel = (agentType: string, title: string) => {
+    if (title.startsWith("Case Studies:")) return "Case Study Search";
+    if (title.startsWith("Research Papers:")) return "Paper Search";
+    return agentLabelMap[agentType] || agentType;
+  };
+
   const tasks: Task[] = dbTasks.slice(0, 5).map(t => ({
     id: t.id,
     title: t.title,
-    agent: agentLabelMap[t.agent_type] || t.agent_type,
+    agent: getTaskAgentLabel(t.agent_type, t.title),
     papers: t.paper_count,
     status: t.status as Task["status"],
     time: new Date(t.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
@@ -306,6 +314,7 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
     { icon: "◎", label: "Citations" },
     { icon: "⊞", label: "Library" },
     { icon: "⌕", label: "Find Papers" },
+    { icon: "▤", label: "Case Studies" },
     { icon: "◌", label: "Settings" },
   ];
 
@@ -327,7 +336,7 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
         return { icon: "✓", text: `**${item.title}** completed · Score ${item.score}/100`, time: `Today, ${time}`, color: C.green };
       } else {
         const t = item as DBTask;
-        if (t.status === "processing") return { icon: "◉", text: `**${t.agent_type}** agent started for ${t.title}`, time: `Today, ${time}`, color: C.gold };
+        if (t.status === "processing") return { icon: "◉", text: `**${getTaskAgentLabel(t.agent_type, t.title)}** started for ${t.title}`, time: `Today, ${time}`, color: C.gold };
         if (t.status === "failed") return { icon: "⚠", text: `Task **${t.title}** failed to process`, time: `Today, ${time}`, color: C.sienna };
         return { icon: "◈", text: `New task **${t.title}** created`, time: `Today, ${time}`, color: C.inkLight };
       }
@@ -368,7 +377,7 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
       <aside style={{ position: "fixed", top: 64, left: 0, bottom: 0, width: 220, background: C.creamLight, borderRight: `1px solid ${C.border}`, padding: "20px 12px", display: "flex", flexDirection: "column", zIndex: 200 }}>
         <div style={{ marginBottom: 28 }}>
           <div style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 10, fontWeight: 600, color: C.gold, letterSpacing: "0.18em", textTransform: "uppercase", padding: "0 8px", marginBottom: 8 }}>Navigation</div>
-          {navItems.map(item => <SideItem key={item.label} icon={item.icon} label={item.label} badge={item.badge} active={activeNav === item.label} onClick={() => setActiveNav(item.label)} />)}
+          {navItems.map(item => <SideItem key={item.label} icon={item.icon} label={item.label} badge={item.badge} active={activeNav === item.label} onClick={() => { setFocusedResultTaskId(null); setActiveNav(item.label); }} />)}
         </div>
         <div style={{ marginTop: "auto", padding: "12px 4px 0", borderTop: `1px solid ${C.border}` }}>
           <button onClick={handleSignOut} style={{ width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", background: "transparent", border: "none", borderRadius: 3, cursor: "pointer", fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 13.5, color: "#a0522d" }}><span>⏻</span>Sign Out</button>
@@ -387,7 +396,7 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
                   </div>
                   <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: 36, fontWeight: 900, color: C.inkDark }}>{greeting}, <em style={{ color: C.gold }}>{user?.name.split(" ")[0]}.</em></h1>
                 </div>
-                <div style={{ display: "flex", gap: 10 }}><button className="btn-outline" onClick={() => setActiveNav("Results")}>History</button><button className="btn-gold" onClick={() => setActiveNav("Upload Papers")}>Research</button></div>
+                <div style={{ display: "flex", gap: 10 }}><button className="btn-outline" onClick={() => { setFocusedResultTaskId(null); setActiveNav("Results"); }}>History</button><button className="btn-gold" onClick={() => setActiveNav("Upload Papers")}>Research</button></div>
               </div>
             </div>
 
@@ -400,8 +409,8 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24 }}>
               <div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}><span style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 11, fontWeight: 600, color: C.gold, textTransform: "uppercase" }}>Recent Tasks</span><button className="btn-outline" onClick={() => setActiveNav("Results")}>View All</button></div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{tasks.map(t => <TaskCard key={t.id} task={t} onOpen={() => setActiveNav("Results")} />)}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}><span style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontSize: 11, fontWeight: 600, color: C.gold, textTransform: "uppercase" }}>Recent Tasks</span><button className="btn-outline" onClick={() => { setFocusedResultTaskId(null); setActiveNav("Results"); }}>View All</button></div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{tasks.map(t => <TaskCard key={t.id} task={t} onOpen={() => { setFocusedResultTaskId(t.id); setActiveNav("Results"); }} />)}</div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                 <div style={{ background: C.creamLight, border: `1px solid ${C.border}`, borderRadius: 4, padding: "20px" }}>
@@ -421,10 +430,11 @@ export default function Dashboard({ onNavigateHome }: { onNavigateHome?: () => v
             {activeNav === "My Papers" && <MyPapers />}
             {activeNav === "Ask AI" && <Chat />}
             {activeNav === "Agents" && <Agents />}
-            {activeNav === "Results" && <Results />}
+            {activeNav === "Results" && <Results focusedTaskId={focusedResultTaskId} />}
             {activeNav === "Citations" && <Citations />}
             {activeNav === "Library" && <Library />}
             {activeNav === "Find Papers" && <FindPapers />}
+            {activeNav === "Case Studies" && <CaseStudies />}
             {activeNav === "Settings" && <Settings />}
           </>
         )}

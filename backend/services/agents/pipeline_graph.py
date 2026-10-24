@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 def route_sufficiency(state: dict) -> list[str] | str:
     """Route after sufficiency_eval."""
     report = state.get("sufficiency_report", {})
+    if report.get("evaluation_unavailable"):
+        return "scrape_permission"
     if report.get("source_count_override"):
         return "scrape_permission"
     passed = report.get("overall_assessment") == "sufficient"

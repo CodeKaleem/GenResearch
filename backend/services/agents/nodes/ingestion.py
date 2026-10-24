@@ -64,6 +64,7 @@ async def ingestion_node(state: dict) -> dict:
             "url": s.get("url", ""), "doi": s.get("doi", ""),
             "accessed_date": s.get("accessed_date", datetime.utcnow().isoformat()),
             "tag": "scraped", "source_type": s.get("source_api", "web"),
+            "source_category": s.get("source_category", "general"),
             "abstract_snippet": abstract,
             "evidence_level": "full_text" if content else "abstract" if abstract else "none",
         })

@@ -57,6 +57,30 @@ export interface TaskResult {
   created_at: string;
 }
 
+export interface DiscoveryRecord {
+  title?: string;
+  authors?: string | string[];
+  year?: number | string | null;
+  venue?: string;
+  abstract?: string;
+  citations?: number;
+  doi?: string;
+  url?: string;
+  source?: string;
+  keywords?: string[];
+}
+
+export interface DiscoverySearchPayload {
+  kind: "discovery_search";
+  category: "case_studies" | "research_papers";
+  query: string;
+  records: DiscoveryRecord[];
+  reports: {
+    all: string;
+    byStudy: Record<string, string>;
+  };
+}
+
 export interface Citation {
   id: string;
   user_id: string;
@@ -223,6 +247,50 @@ export async function getUserResults(userId: string) {
 
 export async function createTaskResult(result: Omit<TaskResult, "id" | "created_at">) {
   return supabase.from("task_results").insert(result).select().single();
+}
+
+export async function saveDiscoverySearchResult(
+  userId: string,
+  title: string,
+  payload: DiscoverySearchPayload,
+) {
+  const { data: task, error: taskError } = await createTask({
+    user_id: userId,
+    title,
+    agent_type: "literature_review",
+    paper_count: payload.records.length,
+    status: "completed",
+  });
+  if (taskError || !task) throw taskError || new Error("Could not create a search result task.");
+
+  const { data: result, error } = await createTaskResult({
+    task_id: task.id,
+    user_id: userId,
+    type: "review",
+    title,
+    content: JSON.stringify(payload),
+    score: 0,
+  });
+  if (error || !result) throw error || new Error("Could not save the search results.");
+  return result as TaskResult;
+}
+
+export async function appendDiscoverySearchResult(
+  userId: string,
+  taskId: string,
+  title: string,
+  payload: DiscoverySearchPayload,
+) {
+  const { data, error } = await createTaskResult({
+    task_id: taskId,
+    user_id: userId,
+    type: "review",
+    title,
+    content: JSON.stringify(payload),
+    score: 0,
+  });
+  if (error || !data) throw error || new Error("Could not save the generated report.");
+  return data as TaskResult;
 }
 
 // ── Citations ────────────────────────────────────────────────

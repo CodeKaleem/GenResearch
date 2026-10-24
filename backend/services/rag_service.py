@@ -227,11 +227,23 @@ async def semantic_search_session(
 # not close to any chunk in embedding space, so we steer the query toward the
 # parts of a paper that actually answer it.
 _TOPIC_TERMS = {
+    # Broad document-level intents
     "summary": "abstract introduction objectives methodology results conclusion contributions",
     "gaps": "limitations future work challenges open problems research gap threats to validity",
     "improvements": "limitations weaknesses threats to validity assumptions future work",
     "future_work": "future work conclusion limitations next steps",
     "contributions": "we propose contributions novel main findings conclusion",
+    # Section-specific retrieval terms (aligned with research paper structure guide)
+    "introduction": "background research context problem statement research gap aim objectives research questions significance scope",
+    "literature_review": "previous studies related work themes comparison methodology evaluation findings limitations research gap synthesis",
+    "theoretical_framework": "theory model framework concepts variables relationships hypotheses adoption",
+    "methodology": "research design approach data collection analysis procedure evaluation metrics instruments ethical sample",
+    "results": "findings results outcomes performance accuracy precision recall F1 table figure metrics",
+    "discussion": "interpretation implications comparison prior literature theoretical practical significance",
+    "limitations": "limitations threats validity constraints weaknesses assumptions scope boundaries generalizability",
+    "conclusion": "answers research questions contributions summary findings implications",
+    "recommendations": "recommendations practical proposals actions improvements suggestions based on findings",
+    "case_studies": "case study real-world example empirical practical application scenario",
 }
 
 _INTENT_INSTRUCTIONS = {
@@ -240,6 +252,17 @@ _INTENT_INSTRUCTIONS = {
     "improvements": "List concrete weaknesses or improvement opportunities that the excerpts actually support (e.g. stated limitations, missing baselines, small samples), each with its source number.",
     "future_work": "List the future-work directions the excerpts state or clearly imply, each with its source number.",
     "contributions": "List the main contributions the excerpts claim, each with its source number.",
+    # Section-specific instructions
+    "introduction": "Extract background context, problem statements, research gaps, objectives, and research questions supported by the excerpts.",
+    "literature_review": "Extract thematic findings, methodologies, comparisons between studies, and identified research gaps from the excerpts.",
+    "theoretical_framework": "Extract the theoretical or conceptual models, their key concepts, and how they apply to the research problem.",
+    "methodology": "Extract research design details, data collection procedures, analysis methods, and evaluation criteria from the excerpts.",
+    "results": "Extract reported findings, performance metrics, quantitative outcomes, and empirical results from the excerpts.",
+    "discussion": "Extract interpretations of findings, comparisons to prior work, theoretical and practical implications.",
+    "limitations": "Extract study limitations, threats to validity, and constraints explicitly acknowledged in the excerpts.",
+    "conclusion": "Extract how research questions were answered and what the main contributions are per the excerpts.",
+    "recommendations": "Extract practical recommendations and proposals supported by the study findings.",
+    "case_studies": "Extract case descriptions, case analyses, and their connections to research questions.",
 }
 
 _FOLLOWUP_RE = re.compile(

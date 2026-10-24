@@ -66,8 +66,18 @@ def normalize_paper_record(
     abstract: str,
     url: str,
     publication_date: str,
+    doi: str = "",
+    keywords: Optional[List[str]] = None,
+    journal: str = "",
+    venue: str = "",
 ) -> dict[str, Any]:
-    """Normalize paper metadata into the unified FYP dictionary schema."""
+    """Normalize paper metadata into the unified FYP dictionary schema.
+
+    Fields align with academic paper reference requirements:
+    - doi: Digital Object Identifier for traceable citation
+    - keywords: Author-provided terms (aids thematic search in literature reviews)
+    - journal/venue: Publication venue for proper reference formatting
+    """
     cleaned_authors = [
         re.sub(r"\s+", " ", str(a)).strip()
         for a in (authors or [])
@@ -79,6 +89,17 @@ def normalize_paper_record(
     cleaned_url = str(url or "").strip()
     cleaned_date = str(publication_date or "").strip()
 
+    # Extract DOI from URL if not provided explicitly
+    cleaned_doi = str(doi or "").strip()
+    if not cleaned_doi and "doi.org/" in cleaned_url:
+        cleaned_doi = cleaned_url.split("doi.org/")[-1].strip()
+
+    cleaned_keywords = [
+        re.sub(r"\s+", " ", str(k)).strip()
+        for k in (keywords or [])
+        if re.sub(r"\s+", " ", str(k)).strip()
+    ]
+
     return {
         "source": source,
         "title": cleaned_title,
@@ -86,6 +107,10 @@ def normalize_paper_record(
         "abstract": cleaned_abstract,
         "url": cleaned_url,
         "publication_date": cleaned_date,
+        "doi": cleaned_doi,
+        "keywords": cleaned_keywords,
+        "journal": re.sub(r"\s+", " ", str(journal or "")).strip(),
+        "venue": re.sub(r"\s+", " ", str(venue or "")).strip(),
     }
 
 

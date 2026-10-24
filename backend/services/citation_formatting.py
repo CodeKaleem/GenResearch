@@ -66,6 +66,23 @@ def normalize_citation_tags(text: str) -> str:
     return text
 
 
+def normalize_registry_citation_ids(text: str, citation_registry: list[dict]) -> str:
+    """Wrap bare citation IDs only when they identify a source in the registry."""
+    text = normalize_citation_tags(text)
+    valid_ids = {
+        str(entry.get("id", "")).upper()
+        for entry in citation_registry
+        if entry.get("id")
+    }
+    for citation_id in sorted(valid_ids, key=len, reverse=True):
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_\[])({re.escape(citation_id)})(?![A-Za-z0-9_\]])",
+            re.IGNORECASE,
+        )
+        text = pattern.sub(lambda match: f"[{match.group(1).upper()}]", text)
+    return text
+
+
 def drop_unknown_citation_tags(text: str, valid_source_ids: set[str]) -> str:
     """Remove well-formed [CR-...] tags that are not in the registry."""
     valid = {item.upper() for item in valid_source_ids}
@@ -214,23 +231,66 @@ _RESOLVED_CITATION = re.compile(
     re.IGNORECASE,
 )
 
+_META_OR_SCOPE_PATTERNS = [
+    # Paper's own aims and objectives
+    re.compile(r"\b(?:this\s+(?:paper|study|proposal|work|review|article|chapter|section|thesis|report)\s+(?:aims|proposes|investigates|explores|evaluates|presents|examines|reviews|discusses|outlines|describes|focuses|seeks|attempts|addresses))\b", re.IGNORECASE),
+    re.compile(r"\b(?:the\s+(?:aim|goal|purpose|objective|focus|scope|contribution|structure)\s+of\s+this\s+(?:paper|study|proposal|work|review|article|research|report))\b", re.IGNORECASE),
+    re.compile(r"\b(?:our\s+(?:goal|aim|purpose|objective|approach|work|study|pipeline|methodology|framework|system|contribution))\s+(?:is|focuses|consists|aims)\b", re.IGNORECASE),
+    re.compile(r"\b(?:we\s+(?:propose|aim|investigate|examine|explore|present|introduce|develop|evaluate|describe|outline|hypothesize|argue|discuss|detail))\b", re.IGNORECASE),
+    re.compile(r"\b(?:in\s+this\s+(?:paper|study|work|proposal|review|article|section),\s*we)\b", re.IGNORECASE),
+    # Structure and organization
+    re.compile(r"\b(?:the\s+(?:remainder|rest)\s+of\s+this\s+(?:paper|section|document|article)\s+is\s+(?:organized|structured))\b", re.IGNORECASE),
+    re.compile(r"\b(?:section\s+\d+|in\s+section\s+\d+|in\s+this\s+section)\b", re.IGNORECASE),
+    re.compile(r"\b(?:organized\s+as\s+follows|structured\s+as\s+follows)\b", re.IGNORECASE),
+    re.compile(r"\b(?:the\s+following\s+sections?\s+(?:describe|present|discuss|detail|outline))\b", re.IGNORECASE),
+    # Methods of this paper
+    re.compile(r"\b(?:we\s+(?:conducted|performed|utilized|employed|applied|implemented|collected|analyzed|gathered|trained|evaluated|tested))\b", re.IGNORECASE),
+    re.compile(r"\b(?:in\s+our\s+(?:methodology|experiments|approach|evaluation|implementation|study|framework))\b", re.IGNORECASE),
+    re.compile(r"\b(?:data\s+(?:was|were)\s+(?:collected|gathered|analyzed|extracted)\s+using)\b", re.IGNORECASE),
+    # Scope and boundaries
+    re.compile(r"\b(?:the\s+scope\s+of\s+this\s+(?:paper|study|review|work)\s+is)\b", re.IGNORECASE),
+    re.compile(r"\b(?:this\s+(?:review|study|paper)\s+is\s+limited\s+to)\b", re.IGNORECASE),
+    re.compile(r"\b(?:we\s+(?:restrict|limit|confine)\s+our\s+(?:focus|attention|scope|discussion))\b", re.IGNORECASE),
+]
+
+
+def is_meta_or_scope_sentence(sentence: str) -> bool:
+    """Return True if sentence is about the paper's own aims, structure, methods or scope."""
+    cleaned = sentence.strip()
+    return any(p.search(cleaned) is not None for p in _META_OR_SCOPE_PATTERNS)
+
+
+class UncitedSentencesResult(tuple):
+    """Result of flag_uncited_sentences.
+
+    Behaves as a 3-tuple (text, flagged_count, sentence_count) for complete
+    backward-compatibility, while exposing .review_list containing uncited claims.
+    """
+    def __new__(cls, text: str, flagged_count: int, sentence_count: int, review_list: list[str] | None = None):
+        return super().__new__(cls, (text, flagged_count, sentence_count))
+
+    def __init__(self, text: str, flagged_count: int, sentence_count: int, review_list: list[str] | None = None):
+        self.text = text
+        self.flagged_count = flagged_count
+        self.sentence_count = sentence_count
+        self.review_list = list(review_list or [])
+
 
 def flag_uncited_sentences(
-    text: str, valid_source_ids: set[str]
-) -> tuple[str, int, int]:
-    """Append [CITATION NEEDED] to claim sentences that lack a valid citation.
+    text: str, valid_source_ids: set[str], add_markers: bool = False
+) -> UncitedSentencesResult:
+    """Collect uncited factual claims without cluttering the paper with [CITATION NEEDED].
 
-    Recognises both raw [CR-...] registry tags AND resolved (Author, Year) text,
-    since the literature review pipeline now resolves citations before calling this.
-
-    Works line by line so headings, horizontal rules, list numbers, bold labels
-    and author initials are never mistaken for sentences.
-    Returns (text, flagged_count, sentence_count).
+    Skips sentences describing the paper's own aims, structure, methods and scope.
+    Collects uncited claims into .review_list for author review.
+    If add_markers is True, appends [CITATION NEEDED] to flagged sentences (legacy test mode).
+    Returns UncitedSentencesResult (unpacks as (text, flagged_count, sentence_count)).
     """
     valid = {item.upper() for item in valid_source_ids}
     flagged = total = 0
     in_references = False
     output: list[str] = []
+    review_list: list[str] = []
 
     for line in text.split("\n"):
         if not line.strip() or _RULE_LINE.match(line) or _LABEL_LINE.match(line) or _TABLE_ROW.match(line):
@@ -257,6 +317,12 @@ def flag_uncited_sentences(
             if len(words) < _MIN_CLAIM_WORDS:
                 checked.append(sentence)
                 continue
+
+            # Skip sentences describing the paper's own aims, structure, methods, scope
+            if is_meta_or_scope_sentence(sentence):
+                checked.append(sentence)
+                continue
+
             total += 1
             # Accept either a raw [CR-...] tag or a resolved (Author, Year) citation
             ids = {item.upper() for item in CITATION_TAG.findall(sentence)}
@@ -265,11 +331,36 @@ def flag_uncited_sentences(
             if has_raw_tag or has_resolved:
                 checked.append(sentence)
                 continue
+
             flagged += 1
-            checked.append(_mark_before_terminal_punctuation(sentence))
+            review_list.append(sentence.strip())
+            if add_markers:
+                checked.append(_mark_before_terminal_punctuation(sentence))
+            else:
+                checked.append(sentence)
         output.append(prefix + " ".join(checked))
 
-    return "\n".join(output), flagged, total
+    return UncitedSentencesResult("\n".join(output), flagged, total, review_list)
+
+
+def clean_citation_needed_markers(text: str) -> tuple[str, list[str]]:
+    """Strip [CITATION NEEDED] markers from final text and extract claims into a review list.
+
+    Guarantees [CITATION NEEDED] is never left in the final paper text.
+    """
+    review_list: list[str] = []
+    for line in text.split("\n"):
+        if "[CITATION NEEDED]" in line or "(citation needed)" in line.lower():
+            for s in split_prose_sentences(line):
+                if "[CITATION NEEDED]" in s or "(citation needed)" in s.lower():
+                    cleaned_claim = re.sub(r"\s*\[CITATION NEEDED\]", "", s, flags=re.IGNORECASE)
+                    cleaned_claim = re.sub(r"\s*\(citation needed\)", "", cleaned_claim, flags=re.IGNORECASE).strip()
+                    if cleaned_claim:
+                        review_list.append(cleaned_claim)
+
+    cleaned_text = re.sub(r"\s*\[CITATION NEEDED\]", "", text, flags=re.IGNORECASE)
+    cleaned_text = re.sub(r"\s*\(citation needed\)", "", cleaned_text, flags=re.IGNORECASE)
+    return cleaned_text, review_list
 
 
 
@@ -587,6 +678,7 @@ def resolve_and_append_references(
     draft_text: str,
     citation_registry: list[dict],
     heading: str = "## References",
+    strip_markers: bool = False,
 ) -> str:
     """Resolve in-text citation tags and append references for cited sources."""
     if (
@@ -601,6 +693,8 @@ def resolve_and_append_references(
     draft_text = collapse_duplicate_citation_markers(draft_text)
     used_ids = {citation_id.upper() for citation_id in CITATION_TAG.findall(draft_text)}
     resolved = resolve_in_text_citations(draft_text, citation_registry)
+    if strip_markers:
+        resolved, _ = clean_citation_needed_markers(resolved)
     references = build_reference_list(citation_registry, used_ids=used_ids)
 
     if not references:
@@ -609,3 +703,181 @@ def resolve_and_append_references(
     # Blank line between entries so Markdown renders them as separate paragraphs.
     reference_block = "\n\n".join(references)
     return f"{resolved.rstrip()}\n\n{heading}\n\n{reference_block}"
+
+
+# ------------------------------------------------------------
+# Phase 3 & 6: Citation Integrity, Release Gate & Metrics
+# ------------------------------------------------------------
+_PLACEHOLDER_RELEASE_GATE = re.compile(
+    r"\[(?:CITATION\s+NEEDED|TODO|TBD|INSERT[^\]]*|FIGURE:[^\]]*)\]|\b(?:TODO|TBD)\b",
+    re.IGNORECASE,
+)
+
+
+def check_citation_integrity(
+    draft_text: str,
+    citation_registry: list[dict],
+    is_resolved: bool = False,
+) -> tuple[bool, list[str]]:
+    """Fail check if:
+    1. Any cited [CR-...] ID has no reference entry in citation_registry.
+    2. If is_resolved is True, any CR- string remains in the output text.
+    """
+    errors: list[str] = []
+    registry_ids = {
+        entry.get("id", "").upper(): entry
+        for entry in citation_registry
+        if entry.get("evidence_level") != "none" and entry.get("id")
+    }
+
+    raw_ids = [m.upper() for m in CITATION_TAG.findall(draft_text)]
+    for cid in set(raw_ids):
+        if cid not in registry_ids:
+            errors.append(f"Cited ID [{cid}] has no reference entry in citation registry.")
+
+    if is_resolved:
+        leaked = re.findall(r"(?:\[CR-\d+|CR-\d{3})", draft_text)
+        if leaked:
+            errors.append(f"Unresolved CR- string(s) remain in final output: {sorted(set(leaked))}")
+
+    return len(errors) == 0, errors
+
+
+def validate_release_gate(
+    final_text: str,
+    citation_registry: list[dict],
+    sections: list[dict] | None = None,
+    min_sources: int = 3,
+    review_list: list[str] | None = None,
+    cited_source_ids: set[str] | None = None,
+) -> tuple[bool, list[str], dict]:
+    """Release Gate (Phase 6):
+    Blocks output if there are any placeholders, leaked IDs, an empty reference list,
+    or fewer than minimum number of sources.
+
+    Tracks per run:
+    - unique_sources
+    - share_of_factual_sentences_with_verified_citations
+    - claims_sent_to_review_list
+    """
+    errors: list[str] = []
+
+    # 1. Placeholders
+    placeholders = _PLACEHOLDER_RELEASE_GATE.findall(final_text)
+    if placeholders:
+        errors.append(f"Output blocked: placeholders found in text: {sorted(set(placeholders))}")
+
+    # 2. Leaked IDs
+    leaked_ids = re.findall(r"(?:\[CR-\d+|CR-\d{3})", final_text)
+    if leaked_ids:
+        errors.append(f"Output blocked: leaked CR- tags found in output: {sorted(set(leaked_ids))}")
+
+    # 3. References and unique sources
+    has_refs = bool(re.search(r"(?im)^\s*##\s+(?:references|bibliography|works cited)\b", final_text))
+    if not has_refs and "## References" not in final_text:
+        errors.append("Output blocked: reference list is empty or missing.")
+
+    valid_ids = {
+        s.get("id", "").upper()
+        for s in citation_registry
+        if s.get("evidence_level") != "none" and s.get("id")
+    }
+    unique_sources = 0
+    if cited_source_ids is not None:
+        unique_sources = len({source_id.upper() for source_id in cited_source_ids} & valid_ids)
+    elif sections:
+        section_text_all = "\n".join(s.get("text", "") for s in sections)
+        raw_used = set(CITATION_TAG.findall(section_text_all))
+        if raw_used:
+            unique_sources = len(raw_used)
+        else:
+            resolved_matches = _RESOLVED_CITATION.findall(section_text_all)
+            unique_sources = len(set(resolved_matches))
+    if unique_sources == 0:
+        raw_used = set(CITATION_TAG.findall(final_text))
+        if raw_used:
+            unique_sources = len(raw_used)
+        else:
+            resolved_matches = _RESOLVED_CITATION.findall(final_text)
+            unique_sources = len(set(resolved_matches))
+
+    if unique_sources < min_sources:
+        errors.append(
+            f"Output blocked: fewer than minimum number of sources ({unique_sources} found, minimum {min_sources})."
+        )
+
+    # Missing registry entries check
+    raw_ids_in_final = set(CITATION_TAG.findall(final_text))
+    missing = [cid for cid in raw_ids_in_final if cid.upper() not in valid_ids]
+    if missing:
+        errors.append(f"Output blocked: cited ID(s) without reference entry: {missing}")
+
+    # 4. Metrics
+    sentences = split_prose_sentences(final_text)
+    total_factual = 0
+    verified_factual = 0
+    for s in sentences:
+        if not is_meta_or_scope_sentence(s) and len(s.split()) >= _MIN_CLAIM_WORDS:
+            total_factual += 1
+            if _RESOLVED_CITATION.search(s) or (set(CITATION_TAG.findall(s)) & valid_ids):
+                verified_factual += 1
+
+    share_verified = round(verified_factual / total_factual, 3) if total_factual > 0 else 1.0
+    review_count = len(review_list or [])
+
+    metrics = {
+        "unique_sources": unique_sources,
+        "share_of_factual_sentences_with_verified_citations": share_verified,
+        "total_factual_sentences": total_factual,
+        "verified_factual_sentences": verified_factual,
+        "claims_sent_to_review_list": review_count,
+        "passed_gate": len(errors) == 0,
+    }
+
+    return len(errors) == 0, errors, metrics
+
+
+# ------------------------------------------------------------
+# Phase 5: DOI Resolution Verification
+# ------------------------------------------------------------
+async def verify_doi_resolves(doi: str, timeout: float = 5.0) -> bool:
+    """Verify that a DOI resolves via doi.org."""
+    if not doi or not str(doi).strip():
+        return False
+    clean_doi = str(doi).strip()
+    for prefix in ("http://", "https://", "doi.org/", "dx.doi.org/"):
+        if clean_doi.lower().startswith(prefix):
+            clean_doi = clean_doi[len(prefix):]
+    clean_doi = clean_doi.strip()
+    if not clean_doi:
+        return False
+
+    url = f"https://doi.org/{clean_doi}"
+    headers = {"User-Agent": "GenResearch/0.2.0 (mailto:research@genresearch.dev)"}
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+            try:
+                async with session.head(url, headers=headers, allow_redirects=True) as resp:
+                    if resp.status < 400:
+                        return True
+            except Exception:
+                pass
+            async with session.get(url, headers=headers, allow_redirects=True) as resp:
+                return resp.status < 400
+    except Exception:
+        return False
+
+
+async def verify_registry_dois(citation_registry: list[dict], timeout: float = 5.0) -> list[dict]:
+    """Verify all reference DOIs in citation_registry concurrently."""
+    import asyncio
+
+    async def _check(entry: dict) -> dict:
+        doi = entry.get("doi")
+        if not doi:
+            return {**entry, "doi_verified": None}
+        resolves = await verify_doi_resolves(doi, timeout=timeout)
+        return {**entry, "doi_verified": resolves}
+
+    return await asyncio.gather(*(_check(entry) for entry in citation_registry))

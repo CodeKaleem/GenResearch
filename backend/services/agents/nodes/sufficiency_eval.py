@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from services.llm_service import call_llm
 from services.agents.prompts.sufficiency import (
@@ -40,6 +41,7 @@ async def sufficiency_eval_node(state: dict) -> dict:
     # Track attempt
     attempt_update = increment_attempt(state, NODE_NAME)
 
+    t0 = time.perf_counter()
     prompt = build_sufficiency_prompt(
         topic=topic,
         answers=answers,
@@ -51,17 +53,21 @@ async def sufficiency_eval_node(state: dict) -> dict:
         prompt=prompt,
         agent_role="sufficiency_evaluator",
         system=SUFFICIENCY_SYSTEM,
-        temperature=0.2,
-        max_tokens=2000,
+        temperature=0.0,
+        max_tokens=1500,
     )
+    elapsed = time.perf_counter() - t0
+    logger.info("sufficiency_eval_llm_done", extra={"elapsed_s": round(elapsed, 2)})
 
     report = parse_llm_json(raw)
-    if report is None:
+    parse_failed = report is None
+    if parse_failed:
         logger.warning("sufficiency_json_parse_failed", extra={"raw": raw[:500]})
         report = {
             "sections": {},
             "overall_assessment": "needs_more",
-            "summary": "Failed to parse evaluation — treating as needs_more.",
+            "evaluation_unavailable": True,
+            "summary": "Evaluation returned invalid JSON; continuing with source gathering.",
         }
 
     # The LLM can be too lenient about coverage when the supplied source set
@@ -91,14 +97,23 @@ async def sufficiency_eval_node(state: dict) -> dict:
 
     # A5 Fix: compute retry/flag locally
     passed = report.get("overall_assessment") == "sufficient"
-    feedback = "Material is insufficient. Missing background or sources."
-    decision = "proceed" if source_count_override else should_retry(
-        state,
-        NODE_NAME,
-        passed,
-        feedback,
-        attempts_done=state.get("retry_counts", {}).get(NODE_NAME, 0) + 1,
+    feedback = (
+        "Sufficiency evaluation returned invalid JSON; used the needs-more fallback."
+        if parse_failed
+        else "Material is insufficient. Missing background or sources."
     )
+    if parse_failed:
+        decision = "flag"
+    elif source_count_override:
+        decision = "proceed"
+    else:
+        decision = should_retry(
+            state,
+            NODE_NAME,
+            passed,
+            feedback,
+            attempts_done=state.get("retry_counts", {}).get(NODE_NAME, 0) + 1,
+        )
 
     extra_state = {}
     if decision == "retry":

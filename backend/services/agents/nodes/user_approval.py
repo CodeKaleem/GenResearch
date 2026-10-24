@@ -19,6 +19,15 @@ async def user_approval_node(state: dict) -> dict:
     configuration on this node. The pipeline API resumes execution
     when the user submits their approval.
     """
+    if state.get("status") == "approved" or state.get("approval_comment"):
+        return {
+            "status": "running",
+            "current_step": "user_approval",
+            "steps_log": [
+                "✓ Outline and sources approved by user — proceeding to draft generation"
+            ],
+        }
+
     return {
         "status": "awaiting_approval",
         "current_step": "user_approval",

@@ -24,7 +24,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         num_thread=settings.OLLAMA_HEAVY_NUM_THREAD,
         num_gpu=settings.OLLAMA_HEAVY_NUM_GPU,
         num_ctx=settings.OLLAMA_HEAVY_CONTEXT,
-        think=None,
+        think=False,
     ),
     "mid": ModelSpec(
         "mid",
@@ -33,7 +33,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         num_thread=settings.OLLAMA_MID_NUM_THREAD,
         num_gpu=settings.OLLAMA_MID_NUM_GPU,
         num_ctx=settings.OLLAMA_MID_CONTEXT,
-        think=None,
+        think=False,
     ),
     "light": ModelSpec(
         "light",
@@ -42,7 +42,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         num_thread=settings.OLLAMA_LIGHT_NUM_THREAD,
         num_gpu=settings.OLLAMA_LIGHT_NUM_GPU,
         num_ctx=settings.OLLAMA_LIGHT_CONTEXT,
-        think=None,
+        think=False,
     ),
 }
 
@@ -64,7 +64,7 @@ ROLE_MODEL_CHAINS: dict[str, list[str]] = {
     "sufficiency_evaluator": ["mid", "light"],
     "gap_report": ["mid", "light"],
     "outline_plan": ["mid", "light"],
-    "source_quality_evaluator": ["mid", "light"],
+    "source_quality_evaluator": ["light", "mid"],
     "user_doc_quality_eval": ["mid", "light"],
     "questionnaire": ["light", "mid"],
     "section_critic": ["light", "mid"],

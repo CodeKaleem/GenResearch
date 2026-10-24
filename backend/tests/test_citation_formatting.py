@@ -4,10 +4,12 @@ from services.citation_formatting import (
     format_in_text_citation,
     flag_unverified_freeform_citations,
     flag_ungrounded_specifics,
+    normalize_registry_citation_ids,
     _split_sentences,
     collapse_duplicate_citation_markers,
     resolve_and_append_references,
     resolve_in_text_citations,
+    validate_release_gate,
 )
 
 REGISTRY = [
@@ -155,6 +157,60 @@ def test_stable_source_tags_resolve_case_insensitively():
     registry = [{"id": source_id, "title": "A Study", "authors": "Smith, J.", "year": 2024}]
 
     assert "(Smith, 2024)" in resolve_in_text_citations("Claim [cr-012345abcdef].", registry)
+
+
+def test_bare_known_registry_ids_are_normalized_but_unknown_ids_are_not():
+    text = "Evidence from CR-003 and CR-007, but not CR-999 or [CR-003]."
+    registry = [*REGISTRY, {"id": "CR-007", "authors": "Jones, A.", "year": 2023}]
+
+    normalized = normalize_registry_citation_ids(text, registry)
+
+    assert normalized == "Evidence from [CR-003] and [CR-007], but not CR-999 or [CR-003]."
+    resolved = resolve_in_text_citations(normalized, registry)
+    assert "CR-003" not in resolved
+    assert "CR-007" not in resolved
+    assert "CR-999" in resolved
+
+
+def test_release_gate_counts_source_ids_when_author_years_collide():
+    registry = [
+        {"id": "CR-101", "authors": "Smith, J.", "year": 2024, "evidence_level": "abstract"},
+        {"id": "CR-102", "authors": "Smith, J.", "year": 2024, "evidence_level": "abstract"},
+        {"id": "CR-103", "authors": "Jones, A.", "year": 2023, "evidence_level": "abstract"},
+    ]
+    final_text = "## Introduction\nEvidence (Smith, 2024) and (Jones, 2023).\n\n## References\nReferences."
+
+    passed, errors, metrics = validate_release_gate(
+        final_text,
+        registry,
+        sections=[{"text": "Evidence (Smith, 2024) and (Jones, 2023)."}],
+        min_sources=3,
+        cited_source_ids={"CR-101", "CR-102", "CR-103"},
+    )
+
+    assert passed
+    assert not errors
+    assert metrics["unique_sources"] == 3
+
+
+def test_release_gate_still_blocks_when_only_two_source_ids_were_cited():
+    registry = [
+        {"id": "CR-101", "authors": "Smith, J.", "year": 2024, "evidence_level": "abstract"},
+        {"id": "CR-102", "authors": "Jones, A.", "year": 2023, "evidence_level": "abstract"},
+    ]
+    final_text = "## Introduction\nEvidence (Smith, 2024) and (Jones, 2023).\n\n## References\nReferences."
+
+    passed, errors, metrics = validate_release_gate(
+        final_text,
+        registry,
+        sections=[{"text": "Evidence (Smith, 2024) and (Jones, 2023)."}],
+        min_sources=3,
+        cited_source_ids={"CR-101", "CR-102"},
+    )
+
+    assert not passed
+    assert any("2 found, minimum 3" in error for error in errors)
+    assert metrics["unique_sources"] == 2
 
 
 def test_common_citation_placeholders_are_flagged():

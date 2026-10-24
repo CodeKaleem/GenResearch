@@ -19,6 +19,7 @@ from services.citation_formatting import (
 )
 from services.agents.nodes.context_build import context_build_node
 from services.agents.verification_agent import verify_section
+from services.agents.progress import emit_progress
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def _format_section_context_block(section_context: dict) -> str:
         )
         if assigned_sources
         else "None. No real source is available for this section. Write conservatively, "
-        "mark unsupported claims with [CITATION NEEDED], and do not invent sources or content."
+        "soften or drop unsupported claims instead of using placeholders, and do not invent sources or content."
     )
     claims_block = "\n".join(f"- {claim.get('text', '')}" for claim in claims) or "None."
 
@@ -103,8 +104,23 @@ async def draft_node(state: dict) -> dict:
             state.get("citation_verification_result", {}).get("retry_sections", [])
         )
 
-        for section in outline.get("sections", []):
+        all_sections = outline.get("sections", [])
+        total_sections = len(all_sections)
+        emit_progress(
+            session_id, "draft", f"⚡ Commencing draft generation for {total_sections} sections..."
+        )
+
+        for section_idx, section in enumerate(all_sections, 1):
             section_name = section.get("name", "Section")
+            emit_progress(
+                session_id,
+                "draft",
+                f"✍ Drafting section {section_idx}/{total_sections}: {section_name}...",
+            )
+            logger.info(
+                "draft_section_progress",
+                extra={"section": section_name, "step": section_idx, "total": total_sections},
+            )
             previous = previous_sections.get(section_name)
             if retry_sections and section_name not in retry_sections and previous:
                 sections.append(previous)
@@ -209,6 +225,11 @@ async def draft_node(state: dict) -> dict:
             section_payload = verified_section.model_dump()
             sections.append(section_payload)
             draft_sections.append(f"## {section_name}\n{verified_section.text}")
+            emit_progress(
+                session_id,
+                "draft",
+                f"✓ Completed section {section_idx}/{total_sections}: {section_name}",
+            )
 
         draft = "\n\n".join(draft_sections)
         flagged_items = [

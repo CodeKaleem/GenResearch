@@ -15,6 +15,7 @@ from services.agents.pipeline_graph import build_pipeline_graph
 from database.supabase_client import get_supabase
 from database.chroma_client import get_user_collection
 from services import request_context, tracking
+from services.agents.progress import get_session_queue, remove_session_queue
 
 logger = logging.getLogger(__name__)
 
@@ -155,27 +156,52 @@ async def stream_pipeline(session_id: str):
     async def sse_generator() -> AsyncGenerator[str, None]:
         session_token = request_context.set_session_id(session_id)
         user_token = request_context.set_user_id(session_data["state"].get("user_id"))
+        queue = get_session_queue(session_id)
+        worker_error: BaseException | None = None
+        worker_task: asyncio.Task | None = None
+
+        async def astream_worker():
+            nonlocal worker_error
+            try:
+                async for output in _pipeline_graph.astream(
+                    session_data["state"] if not current_state.values else None,
+                    config=config,
+                    stream_mode="updates"
+                ):
+                    for node_name, state_update in output.items():
+                        if node_name == "__interrupt__":
+                            continue
+                        queue.put_nowait({
+                            "type": "state_update",
+                            "node": node_name,
+                            "state": {
+                                "current_step": state_update.get("current_step", node_name),
+                                "steps_log": state_update.get("steps_log", []),
+                                "status": state_update.get("status", "running")
+                            }
+                        })
+            except Exception as exc:
+                worker_error = exc
+            finally:
+                queue.put_nowait(None)
+
         try:
-            # We use astream to yield updates
-            async for output in _pipeline_graph.astream(
-                session_data["state"] if not current_state.values else None, 
-                config=config,
-                stream_mode="updates"
-            ):
-                for node_name, state_update in output.items():
-                    if node_name == "__interrupt__":
-                        continue
-                        
-                    yield json.dumps({
-                        "type": "state_update",
-                        "node": node_name,
-                        "state": {
-                            "current_step": state_update.get("current_step", node_name),
-                            "steps_log": state_update.get("steps_log", []),
-                            "status": state_update.get("status", "running")
-                        }
-                    }) + "\n"
-            
+            worker_task = asyncio.create_task(astream_worker())
+
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield json.dumps({"type": "ping"}) + "\n"
+                    continue
+
+                if item is None:
+                    break
+                yield json.dumps(item) + "\n"
+
+            if worker_error is not None:
+                raise worker_error
+
             # Check if it stopped because of an interrupt
             final_state = _pipeline_graph.get_state(config)
             next_nodes = final_state.next
@@ -234,6 +260,9 @@ async def stream_pipeline(session_id: str):
             )
             yield json.dumps({"type": "error", "message": str(e)}) + "\n"
         finally:
+            remove_session_queue(session_id)
+            if worker_task and not worker_task.done():
+                worker_task.cancel()
             request_context.reset_user_id(user_token)
             request_context.reset_session_id(session_token)
             stream_lock.release()
