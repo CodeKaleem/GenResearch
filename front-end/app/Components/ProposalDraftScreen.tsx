@@ -22,6 +22,8 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
   
   const [questions, setQuestions] = useState<any[]>([]);
   const [answers, setAnswers] = useState<Record<string, any>>({});
+  const [materialFiles, setMaterialFiles] = useState<File[]>([]);
+  const [questionnaireError, setQuestionnaireError] = useState("");
   const [approvalComment, setApprovalComment] = useState("");
   
   const [outline, setOutline] = useState<any>(null);
@@ -42,6 +44,7 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
     if (!userId || selected.size === 0 || !topic.trim()) return;
     setLoading(true); setResult(null); setActiveTab("logs"); 
     setAwaitingApproval(false); setAwaitingQuestionnaire(false); setAwaitingScrapePermission(false);
+    setMaterialFiles([]); setQuestionnaireError("");
     setLiveState({ current_step: "starting", steps_log: ["⚡ Pipeline started"] });
     
     try {
@@ -88,6 +91,7 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
               if (data.reason === "awaiting_questionnaire") {
                 setAwaitingQuestionnaire(true);
                 setQuestions(data.questions || []);
+                setQuestionnaireError("");
               } else if (data.reason === "awaiting_scrape_permission") {
                 setAwaitingScrapePermission(true);
               } else if (data.reason === "awaiting_approval") {
@@ -119,15 +123,28 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
   const submitQuestionnaire = async () => {
     if (!sessionId) return;
     setAwaitingQuestionnaire(false);
+    setQuestionnaireError("");
     setLoading(true);
     try {
-      const res = await fetch(`${API}/pipeline/${sessionId}/questionnaire`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers })
+      const formData = new FormData();
+      formData.append("answers", JSON.stringify(answers));
+      materialFiles.forEach(file => formData.append("files", file));
+      const res = await fetch(`${API}/pipeline/${sessionId}/questionnaire/with-files`, {
+        method: "POST",
+        body: formData,
       });
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => null);
+        throw new Error(errorData?.detail || `Error ${res.status}`);
+      }
       startStream(sessionId);
-    } catch (e: any) { setResult({ error: e.message }); setLoading(false); }
+    } catch (e: any) {
+      const message = e instanceof Error ? e.message : "Could not submit questionnaire.";
+      setQuestionnaireError(message);
+      setResult({ error: message });
+      setAwaitingQuestionnaire(true);
+      setLoading(false);
+    }
   };
 
   const submitScrapePermission = async (granted: boolean) => {
@@ -288,6 +305,43 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
           <p style={{ ...bodyText, fontSize: 14, marginBottom: 16 }}>
             The orchestrator needs a bit more context about your existing material to proceed effectively.
           </p>
+          <div style={{ marginBottom: 20 }}>
+            <label htmlFor="questionnaire-materials" style={{ ...bodyText, display: "block", fontSize: 13, fontWeight: "bold", marginBottom: 6 }}>
+              Attach prior notes, drafts, or datasets (optional)
+            </label>
+            <p style={{ ...bodyText, fontSize: 12, color: C.inkLight, marginBottom: 8 }}>
+              Supported files: CSV, TXT, Markdown, JSON, PDF, and DOCX. Up to 5 files, 5 MB each (10 MB total).
+            </p>
+            <input
+              id="questionnaire-materials"
+              type="file"
+              accept=".csv,.txt,.md,.json,.pdf,.docx"
+              multiple
+              onChange={event => setMaterialFiles(Array.from(event.target.files || []))}
+            />
+            {materialFiles.length > 0 && (
+              <ul style={{ ...bodyText, fontSize: 12, margin: "8px 0 0", paddingLeft: 20 }}>
+                {materialFiles.map((file, index) => (
+                  <li key={`${file.name}-${index}`} style={{ marginBottom: 4 }}>
+                    {file.name} ({(file.size / (1024 * 1024)).toFixed(2)} MB){" "}
+                    <button
+                      type="button"
+                      onClick={() => setMaterialFiles(materialFiles.filter((_, fileIndex) => fileIndex !== index))}
+                      aria-label={`Remove ${file.name}`}
+                      style={{ border: "none", background: "transparent", color: C.sienna, cursor: "pointer", textDecoration: "underline" }}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {questionnaireError && (
+              <p role="alert" style={{ ...bodyText, fontSize: 13, color: C.sienna, marginTop: 8 }}>
+                {questionnaireError}
+              </p>
+            )}
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 20 }}>
             {questions.map((q: any) => (
               <div key={q.id}>
@@ -471,4 +525,3 @@ export default function ProposalDraftScreen({ onBack }: { onBack: () => void }) 
     </div>
   );
 }
-

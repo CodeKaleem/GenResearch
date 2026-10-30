@@ -6,20 +6,31 @@ import asyncio
 import json
 import logging
 import uuid
+from io import BytesIO
 from typing import AsyncGenerator
-from fastapi import APIRouter, HTTPException
+from pathlib import Path
+from zipfile import BadZipFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from docx import Document
+from docx.opc.exceptions import PackageNotFoundError
 
 from services.agents.pipeline_graph import build_pipeline_graph
 from database.supabase_client import get_supabase
 from database.chroma_client import get_user_collection
 from services import request_context, tracking
 from services.agents.progress import get_session_queue, remove_session_queue
+from services.pdf_extractor import extract_text_from_pdf
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
+MAX_QUESTIONNAIRE_FILES = 5
+MAX_QUESTIONNAIRE_FILE_BYTES = 5 * 1024 * 1024
+MAX_QUESTIONNAIRE_TOTAL_BYTES = 10 * 1024 * 1024
+MAX_QUESTIONNAIRE_TEXT_CHARS = 100_000
+QUESTIONNAIRE_FILE_TYPES = {".csv", ".docx", ".json", ".md", ".pdf", ".txt"}
 
 # In-memory store for running pipelines (for now)
 # Key: session_id, Value: {"graph": compiled_graph, "state": current_state, "thread_config": ...}
@@ -42,6 +53,62 @@ class StartPipelineRequest(BaseModel):
 
 class SubmitQuestionnaireRequest(BaseModel):
     answers: dict
+
+
+async def _extract_questionnaire_material(file: UploadFile) -> tuple[str, str, int]:
+    filename = Path(file.filename or "uploaded-file").name
+    extension = Path(filename).suffix.lower()
+    if extension not in QUESTIONNAIRE_FILE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type for {filename}. Upload CSV, DOCX, JSON, Markdown, PDF, or TXT.",
+        )
+
+    content = await file.read(MAX_QUESTIONNAIRE_FILE_BYTES + 1)
+    if len(content) > MAX_QUESTIONNAIRE_FILE_BYTES:
+        raise HTTPException(status_code=413, detail=f"{filename} exceeds the 5 MB per-file limit.")
+
+    try:
+        if extension == ".pdf":
+            text = await extract_text_from_pdf(content)
+        elif extension == ".docx":
+            document = Document(BytesIO(content))
+            paragraphs = [paragraph.text for paragraph in document.paragraphs]
+            tables = [
+                "\n".join("\t".join(cell.text for cell in row.cells) for row in table.rows)
+                for table in document.tables
+            ]
+            text = "\n".join(part for part in [*paragraphs, *tables] if part.strip())
+        else:
+            text = content.decode("utf-8-sig")
+    except (UnicodeDecodeError, ValueError, OSError, BadZipFile, PackageNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=f"Could not read {filename}: {exc}") from exc
+
+    if not text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail=f"No readable text was found in {filename}. Scanned PDFs need a text-based copy.",
+        )
+    return filename, text, len(content)
+
+
+def _resume_questionnaire(session_id: str, answers: dict) -> dict:
+    if session_id not in _sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    config = _sessions[session_id]["config"]
+    current_state = _pipeline_graph.get_state(config)
+
+    if "user_doc_quality_eval" not in current_state.next:
+        raise HTTPException(status_code=400, detail="Pipeline is not awaiting questionnaire.")
+
+    _pipeline_graph.update_state(
+        config,
+        {"questionnaire_answers": answers, "status": "questionnaire_answered"},
+        as_node="questionnaire"
+    )
+    return {"status": "resumed"}
+
 
 class ScrapePermissionRequest(BaseModel):
     granted: bool
@@ -273,23 +340,41 @@ async def stream_pipeline(session_id: str):
 @router.post("/{session_id}/questionnaire")
 async def submit_questionnaire(session_id: str, req: SubmitQuestionnaireRequest):
     """Resume the pipeline after questionnaire checkpoint."""
-    if session_id not in _sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-        
-    config = _sessions[session_id]["config"]
-    current_state = _pipeline_graph.get_state(config)
-    
-    if "user_doc_quality_eval" not in current_state.next:
-        raise HTTPException(status_code=400, detail="Pipeline is not awaiting questionnaire.")
-    
-    # Send answers directly to the node that was interrupted BEFORE
-    _pipeline_graph.update_state(
-        config,
-        {"questionnaire_answers": req.answers, "status": "questionnaire_answered"},
-        as_node="questionnaire"
-    )
-    
-    return {"status": "resumed"}
+    return _resume_questionnaire(session_id, req.answers)
+
+
+@router.post("/{session_id}/questionnaire/with-files")
+async def submit_questionnaire_with_files(
+    session_id: str,
+    answers: str = Form(...),
+    files: list[UploadFile] = File(default=[]),
+):
+    """Resume the questionnaire with optional reference materials."""
+    try:
+        parsed_answers = json.loads(answers)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Questionnaire answers must be valid JSON.") from exc
+    if not isinstance(parsed_answers, dict):
+        raise HTTPException(status_code=400, detail="Questionnaire answers must be a JSON object.")
+    if len(files) > MAX_QUESTIONNAIRE_FILES:
+        raise HTTPException(status_code=400, detail="You can attach up to 5 files.")
+
+    materials = []
+    total_bytes = 0
+    for file in files:
+        filename, text, file_size = await _extract_questionnaire_material(file)
+        total_bytes += file_size
+        if total_bytes > MAX_QUESTIONNAIRE_TOTAL_BYTES:
+            raise HTTPException(status_code=413, detail="Attached files exceed the 10 MB total limit.")
+        materials.append(f"--- {filename} ---\n{text}")
+
+    if materials:
+        material_text = "\n\n".join(materials)
+        parsed_answers["uploaded_materials"] = material_text[:MAX_QUESTIONNAIRE_TEXT_CHARS]
+        if len(material_text) > MAX_QUESTIONNAIRE_TEXT_CHARS:
+            parsed_answers["uploaded_materials"] += "\n[Attachment text truncated to fit the research workflow.]"
+
+    return _resume_questionnaire(session_id, parsed_answers)
 
 
 @router.post("/{session_id}/scrape-permission")
