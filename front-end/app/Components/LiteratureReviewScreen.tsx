@@ -6,6 +6,97 @@ import { exportToPDF, exportToDOCX } from "../../lib/exportUtils";
 
 const API = "http://localhost:8000";
 
+function renderInlineMarkdown(text: string, keyPrefix: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*]+\*|_[^_]+_)/g);
+  return parts.map((part, index) => {
+    if ((part.startsWith("**") && part.endsWith("**")) || (part.startsWith("__") && part.endsWith("__"))) {
+      return <strong key={`${keyPrefix}-${index}`}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={`${keyPrefix}-${index}`}>{part.slice(1, -1)}</code>;
+    }
+    if ((part.startsWith("*") && part.endsWith("*")) || (part.startsWith("_") && part.endsWith("_"))) {
+      return <em key={`${keyPrefix}-${index}`}>{part.slice(1, -1)}</em>;
+    }
+    return part;
+  });
+}
+
+function FormattedReview({ content }: { content: string }) {
+  const lines = content.split(/\r?\n/);
+  const blocks: React.ReactNode[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index].trim();
+    if (!line) {
+      index++;
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      const level = Math.min(heading[1].length, 4);
+      const style = level === 1
+        ? { fontSize: 24, margin: "8px 0 16px", paddingBottom: 8, borderBottom: `1px solid ${C.borderGold}` }
+        : level === 2
+          ? { fontSize: 20, margin: "28px 0 10px", paddingBottom: 5, borderBottom: `1px solid ${C.border}` }
+          : { fontSize: level === 3 ? 17 : 15, margin: "18px 0 7px" };
+      blocks.push(
+        <h2
+          key={`heading-${index}`}
+          style={{ ...headingStyle, ...style, color: level <= 2 ? C.inkDark : C.sienna }}
+        >
+          {renderInlineMarkdown(heading[2], `heading-${index}`)}
+        </h2>
+      );
+      index++;
+      continue;
+    }
+
+    const listItem = line.match(/^([-*+]|\d+[.)])\s+(.+)$/);
+    if (listItem) {
+      const ordered = /^\d/.test(listItem[1]);
+      const items: string[] = [];
+      while (index < lines.length) {
+        const item = lines[index].trim().match(/^([-*+]|\d+[.)])\s+(.+)$/);
+        if (!item || /^\d/.test(item[1]) !== ordered) break;
+        items.push(item[2]);
+        index++;
+      }
+      const List = ordered ? "ol" : "ul";
+      blocks.push(
+        <List key={`list-${index}`} style={{ paddingLeft: 26, margin: "8px 0 14px", ...bodyText, color: C.inkDark }}>
+          {items.map((item, itemIndex) => (
+            <li key={`list-${index}-${itemIndex}`} style={{ paddingLeft: 4, marginBottom: 6 }}>
+              {renderInlineMarkdown(item, `list-${index}-${itemIndex}`)}
+            </li>
+          ))}
+        </List>
+      );
+      continue;
+    }
+
+    const paragraph = [line];
+    index++;
+    while (
+      index < lines.length &&
+      lines[index].trim() &&
+      !/^(#{1,4})\s+|([-*+]|\d+[.)])\s+/.test(lines[index].trim())
+    ) {
+      paragraph.push(lines[index].trim());
+      index++;
+    }
+    blocks.push(
+      <p key={`paragraph-${index}`} style={{ ...bodyText, color: C.inkDark, fontSize: 15, lineHeight: 1.8, marginBottom: 12 }}>
+        {renderInlineMarkdown(paragraph.join(" "), `paragraph-${index}`)}
+      </p>
+    );
+  }
+
+  return <div>{blocks}</div>;
+}
+
 export default function LiteratureReviewScreen({ onBack }: { onBack: () => void }) {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -102,7 +193,9 @@ export default function LiteratureReviewScreen({ onBack }: { onBack: () => void 
                 </div>
               </div>
             </div>
-            <div style={{ ...bodyText, fontSize: 14.5, lineHeight: 1.85, whiteSpace: "pre-wrap" }}>{result.review}</div>
+            <div style={{ padding: "4px 8px" }}>
+              <FormattedReview content={result.review} />
+            </div>
           </div>
         </div>
       )}

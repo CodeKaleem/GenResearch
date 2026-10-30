@@ -1,6 +1,13 @@
 import { jsPDF } from "jspdf";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from "docx";
 
+function cleanMarkdownInline(text: string) {
+  return text
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1");
+}
+
 /**
  * Enhanced PDF export with page numbers, headers, footers, and academic formatting.
  */
@@ -24,7 +31,7 @@ export function exportToPDF(title: string, text: string) {
   doc.setFont("times", "normal");
   doc.setFontSize(11);
 
-  const lines = text.split("\n");
+  const lines = text.split("\n").map((line) => line.trim());
   let y = margin + 20;
 
   const checkAddPage = (neededSpace = 10) => {
@@ -39,7 +46,7 @@ export function exportToPDF(title: string, text: string) {
       checkAddPage(12);
       doc.setFont("times", "bold");
       doc.setFontSize(13);
-      doc.text(line.replace("### ", ""), margin, y);
+      doc.text(cleanMarkdownInline(line.replace(/^#{1,4}\s+/, "")), margin, y);
       y += 8;
       doc.setFont("times", "normal");
       doc.setFontSize(11);
@@ -47,7 +54,7 @@ export function exportToPDF(title: string, text: string) {
       checkAddPage(14);
       doc.setFont("times", "bold");
       doc.setFontSize(15);
-      doc.text(line.replace("## ", ""), margin, y);
+      doc.text(cleanMarkdownInline(line.replace(/^#{1,4}\s+/, "")), margin, y);
       y += 10;
       doc.setFont("times", "normal");
       doc.setFontSize(11);
@@ -55,12 +62,13 @@ export function exportToPDF(title: string, text: string) {
       checkAddPage(16);
       doc.setFont("times", "bold");
       doc.setFontSize(17);
-      doc.text(line.replace("# ", ""), margin, y);
+      doc.text(cleanMarkdownInline(line.replace(/^#{1,4}\s+/, "")), margin, y);
       y += 12;
       doc.setFont("times", "normal");
       doc.setFontSize(11);
     } else if (line.trim().length > 0) {
-      const splitText = doc.splitTextToSize(line, maxLineWidth);
+      const cleanLine = cleanMarkdownInline(line).replace(/^[-*+]\s+/, "• ");
+      const splitText = doc.splitTextToSize(cleanLine, maxLineWidth);
       checkAddPage(splitText.length * 5);
       doc.text(splitText, margin, y);
       y += (splitText.length * 5.5);
@@ -70,7 +78,7 @@ export function exportToPDF(title: string, text: string) {
   }
 
   // Footer / Page numbers
-  const totalPages = (doc as any).internal.getNumberOfPages();
+  const totalPages = doc.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
     doc.setFont("times", "italic");
@@ -86,8 +94,8 @@ export function exportToPDF(title: string, text: string) {
  * Enhanced DOCX export with professional academic typography and heading styles.
  */
 export async function exportToDOCX(title: string, text: string) {
-  const lines = text.split("\n");
-  const children: any[] = [];
+  const lines = text.split("\n").map((line) => line.trim());
+  const children: Paragraph[] = [];
 
   // Title Header
   children.push(
@@ -125,9 +133,10 @@ export async function exportToDOCX(title: string, text: string) {
         })
       );
     } else if (line.trim().length > 0) {
+      const listItem = line.match(/^[-*+]\s+(.+)$/);
       children.push(
         new Paragraph({
-          children: [new TextRun({ text: line, font: "Georgia", size: 23 })],
+          children: [new TextRun({ text: cleanMarkdownInline(listItem ? `• ${listItem[1]}` : line), font: "Georgia", size: 23 })],
           spacing: { line: 276, after: 120 }, // 1.15 line spacing
         })
       );
