@@ -29,6 +29,7 @@ export interface ChatMessage {
   sources?: Source[];
   timestamp: string;
   isStreaming?: boolean;
+  streamError?: string;
 }
 
 export interface ChatSession {
@@ -52,34 +53,41 @@ interface PaperOption {
 export function extractThinkingAndAnswer(text: string): { thinking: string; answer: string } {
   if (!text) return { thinking: "", answer: "" };
 
-  // 1. Tagged thinking <think>...</think>
+  let thinking = "";
+  let cleaned = text.trim();
+
   const closedMatch = text.match(/<(?:think|thought|thinking)>([\s\S]*?)<\/(?:think|thought|thinking)>/i);
   if (closedMatch) {
-    const thinking = closedMatch[1].trim();
-    const answer = text.replace(/<(?:think|thought|thinking)>[\s\S]*?<\/(?:think|thought|thinking)>/gi, "").trim();
-    return { thinking, answer };
+    thinking = closedMatch[1].trim();
+    cleaned = text.replace(/<(?:think|thought|thinking)>[\s\S]*?<\/(?:think|thought|thinking)>/gi, "").trim();
   }
 
-  // Unclosed <think>... during streaming
-  const unclosed = text.match(/<(?:think|thought|thinking)>([\s\S]*)$/i);
+  const unclosed = cleaned.match(/<(?:think|thought|thinking)>([\s\S]*)$/i);
   if (unclosed) {
-    return { thinking: unclosed[1].trim(), answer: "" };
+    return { thinking: [thinking, unclosed[1].trim()].filter(Boolean).join("\n\n"), answer: "" };
   }
 
-  // 2. Untagged chain-of-thought preambles
-  const preambleRegex = /^((?:We are given a user question|First, I need to scan|Looking at the document|Important: The user is asking|Let me check the document|The user's question is|Given the strict rules)[\s\S]+?)(?=(?:\r?\n){2,}(?:#+\s*|\*\*|Answer:|Descriptive|Based on|In summary|According to)|$)/i;
-  const preambleMatch = text.match(preambleRegex);
-  if (preambleMatch && preambleMatch[1].length > 40) {
-    const thinking = preambleMatch[1].trim();
-    const remainder = text.slice(preambleMatch[0].length).trim();
-    if (remainder.length > 0) {
-      return { thinking, answer: remainder };
-    } else {
-      return { thinking, answer: "" };
+  const reasoningStart = /^(?:Alright,?\s+let me tackle this user query|We are given a user question|The user (?:wants|is asking)|Important: The user is asking|The user's question is|Given the strict rules|First,? I need to|Looking at the document excerpts|Let me (?:draft|check|answer)|Let's (?:tackle|analyze) (?:this user query|the question))\b/i;
+  const finalMarker = /(?:^|\n+)\s*(?:(?:Concise|Descriptive)\s+Grounded\s+Answer|Final(?:\s+(?:draft|version|answer))?|Answer)\s*:\s*/i;
+  if (reasoningStart.test(cleaned)) {
+    const markerMatch = finalMarker.exec(cleaned);
+    if (markerMatch) {
+      return {
+        thinking: [thinking, cleaned.slice(0, markerMatch.index).trim()].filter(Boolean).join("\n\n"),
+        answer: cleaned.slice(markerMatch.index + markerMatch[0].length).trim(),
+      };
     }
+    const answerStart = /\n{2,}(?=(?:#{1,3}\s|\*\*|Based on\b|In summary\b|According to\b|The answer is\b|The main (?:conclusions|findings)\b))/i.exec(cleaned);
+    if (answerStart) {
+      return {
+        thinking: [thinking, cleaned.slice(0, answerStart.index).trim()].filter(Boolean).join("\n\n"),
+        answer: cleaned.slice(answerStart.index + answerStart[0].length).trim(),
+      };
+    }
+    return { thinking: [thinking, cleaned].filter(Boolean).join("\n\n"), answer: "" };
   }
 
-  return { thinking: "", answer: text.trim() };
+  return { thinking, answer: cleaned };
 }
 
 /**
@@ -90,6 +98,84 @@ export function stripThinking(text: string): string {
   if (!text) return "";
   const { answer } = extractThinkingAndAnswer(text);
   return answer;
+}
+
+function renderInlineMarkdown(text: string, keyPrefix: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*]+\*|_[^_]+_)/g);
+  return parts.map((part, index) => {
+    if ((part.startsWith("**") && part.endsWith("**")) || (part.startsWith("__") && part.endsWith("__"))) {
+      return <strong key={`${keyPrefix}-${index}`}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={`${keyPrefix}-${index}`} style={{ background: C.creamDark, borderRadius: 3, padding: "1px 4px", fontSize: "0.92em" }}>{part.slice(1, -1)}</code>;
+    }
+    if ((part.startsWith("*") && part.endsWith("*")) || (part.startsWith("_") && part.endsWith("_"))) {
+      return <em key={`${keyPrefix}-${index}`}>{part.slice(1, -1)}</em>;
+    }
+    return part;
+  });
+}
+
+function FormattedAnswer({ content }: { content: string }) {
+  const lines = stripThinking(content).split(/\r?\n/);
+  const blocks: React.ReactNode[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index].trim();
+    if (!line) {
+      index++;
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      blocks.push(
+        <h3 key={`heading-${index}`} style={{ fontFamily: "'Playfair Display', serif", fontSize: 16, color: C.inkDark, margin: "14px 0 6px" }}>
+          {renderInlineMarkdown(heading[2], `heading-${index}`)}
+        </h3>
+      );
+      index++;
+      continue;
+    }
+
+    const listMatch = line.match(/^([-*+]|\d+[.)])\s+(.+)$/);
+    if (listMatch) {
+      const ordered = /^\d/.test(listMatch[1]);
+      const items: string[] = [];
+      while (index < lines.length) {
+        const item = lines[index].trim().match(/^([-*+]|\d+[.)])\s+(.+)$/);
+        if (!item || /^\d/.test(item[1]) !== ordered) break;
+        items.push(item[2]);
+        index++;
+      }
+      const List = ordered ? "ol" : "ul";
+      blocks.push(
+        <List key={`list-${index}`} style={{ paddingLeft: 22, margin: "6px 0 10px" }}>
+          {items.map((item, itemIndex) => (
+            <li key={`list-${index}-${itemIndex}`} style={{ paddingLeft: 3, marginBottom: 5 }}>
+              {renderInlineMarkdown(item, `list-${index}-${itemIndex}`)}
+            </li>
+          ))}
+        </List>
+      );
+      continue;
+    }
+
+    const paragraph = [line];
+    index++;
+    while (index < lines.length && lines[index].trim() && !/^(#{1,3})\s+|([-*+]|\d+[.)])\s+/.test(lines[index].trim())) {
+      paragraph.push(lines[index].trim());
+      index++;
+    }
+    blocks.push(
+      <p key={`paragraph-${index}`} style={{ margin: "0 0 9px" }}>
+        {renderInlineMarkdown(paragraph.join(" "), `paragraph-${index}`)}
+      </p>
+    );
+  }
+
+  return <div>{blocks}</div>;
 }
 
 export default function Chat() {
@@ -274,6 +360,10 @@ export default function Chat() {
 
     setInput("");
     setIsLoading(true);
+    let fullContent = "";
+    let thinkingContent = "";
+    let sources: Source[] = [];
+    let streamError = "";
 
     try {
       // Send the last few turns so follow-ups ("explain that more") can be resolved by the backend.
@@ -302,9 +392,27 @@ export default function Chat() {
 
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
-      let fullContent = "";
-      let thinkingContent = "";
-      let sources: Source[] = [];
+
+      const handleStreamLine = (line: string) => {
+        if (!line.trim()) return;
+        try {
+          const data = JSON.parse(line);
+          if (data.type === "sources") {
+            sources = data.sources || [];
+          } else if (data.type === "thinking") {
+            thinkingContent += data.content;
+          } else if (data.type === "token") {
+            fullContent += data.content;
+          } else if (data.type === "answer") {
+            fullContent = data.content;
+          } else if (data.type === "error") {
+            streamError = (data.message || "The response stream ended unexpectedly.")
+              .replace(/^Chat failed:\s*/, "");
+          }
+        } catch {
+          streamError = "The connection ended before a complete response event arrived.";
+        }
+      };
 
       if (reader) {
         let buffer = "";
@@ -316,77 +424,15 @@ export default function Chat() {
           const lines = buffer.split("\n");
           buffer = lines.pop() || "";
 
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const data = JSON.parse(line);
-              if (data.type === "sources") {
-                sources = data.sources || [];
-              } else if (data.type === "thinking") {
-                thinkingContent += data.content;
-                setSessions((prev) =>
-                  prev.map((s) => {
-                    if (s.id === activeSession.id) {
-                      return {
-                        ...s,
-                        messages: s.messages.map((m) =>
-                          m.id === assistantId
-                            ? { ...m, thinking: thinkingContent, isThinking: true, sources }
-                            : m
-                        ),
-                      };
-                    }
-                    return s;
-                  })
-                );
-              } else if (data.type === "token") {
-                fullContent += data.content;
-                const extracted = extractThinkingAndAnswer(fullContent);
-                const displayAnswer = extracted.answer || (extracted.thinking ? "" : fullContent);
-                const currentThinking = thinkingContent || extracted.thinking;
-
-                setSessions((prev) =>
-                  prev.map((s) => {
-                    if (s.id === activeSession.id) {
-                      return {
-                        ...s,
-                        messages: s.messages.map((m) =>
-                          m.id === assistantId
-                            ? {
-                                ...m,
-                                content: displayAnswer,
-                                thinking: currentThinking,
-                                isThinking: false,
-                                sources,
-                              }
-                            : m
-                        ),
-                      };
-                    }
-                    return s;
-                  })
-                );
-              } else if (data.type === "answer") {
-                fullContent = data.content;
-                if (data.thinking) {
-                  thinkingContent = data.thinking;
-                }
-              } else if (data.type === "error") {
-                fullContent = fullContent
-                  ? `${fullContent}\n\n[${data.message}]`
-                  : `Error: ${data.message}`;
-              }
-            } catch {
-              /* ignore stream parse error */
-            }
-          }
+          lines.forEach(handleStreamLine);
         }
+        handleStreamLine(buffer);
       }
 
       // Final update to clear streaming state
       const finalExtracted = extractThinkingAndAnswer(fullContent);
       const cleanedFinal = finalExtracted.answer || stripThinking(fullContent);
-      const finalThinking = thinkingContent || finalExtracted.thinking;
+      thinkingContent = thinkingContent || finalExtracted.thinking;
 
       setSessions((prev) =>
         prev.map((s) => {
@@ -397,11 +443,13 @@ export default function Chat() {
                 m.id === assistantId
                   ? {
                       ...m,
-                      content: cleanedFinal || (finalThinking ? "Analysis complete." : "No response received."),
-                      thinking: finalThinking,
-                      isThinking: false,
+                      content: cleanedFinal || (streamError
+                        ? "The response could not be completed."
+                        : "I couldn't produce a clear answer from the available document excerpts. Try rephrasing your question."),
+                      thinking: thinkingContent || m.thinking,
                       sources,
                       isStreaming: false,
+                      streamError,
                     }
                   : m
               ),
@@ -420,7 +468,11 @@ export default function Chat() {
                 m.id === assistantId
                   ? {
                       ...m,
-                      content: `Error: ${err instanceof Error ? err.message : "Failed to connect to backend."}`,
+                      content: fullContent || `Error: ${err instanceof Error ? err.message : "Failed to connect to backend."}`,
+                      thinking: thinkingContent || m.thinking,
+                      streamError: fullContent
+                        ? `Response interrupted: ${err instanceof Error ? err.message : "The connection ended unexpectedly."}`
+                        : undefined,
                       isStreaming: false,
                     }
                   : m
@@ -648,7 +700,7 @@ export default function Chat() {
               <div
                 style={{
                   maxWidth: msg.role === "user" ? "75%" : "88%",
-                  padding: "12px 16px",
+                  padding: msg.role === "user" ? "12px 16px" : 10,
                   background: msg.role === "user" ? C.inkDark : C.creamLight,
                   color: msg.role === "user" ? C.cream : C.inkDark,
                   border: `1px solid ${msg.role === "user" ? "transparent" : C.border}`,
@@ -659,53 +711,35 @@ export default function Chat() {
                   boxShadow: `0 2px 8px ${C.shadow}`,
                 }}
               >
-                {/* ── Internal Reasoning / Thought Process (shows at beginning, collapsible) ── */}
-                {msg.role === "assistant" && msg.thinking && (
+                {msg.role === "assistant" && msg.thinking && !msg.isStreaming && (
                   <details
-                    open={msg.isThinking}
                     style={{
-                      marginBottom: msg.content ? 12 : 0,
+                      marginBottom: 10,
                       padding: "8px 12px",
-                      background: "rgba(139,105,20,0.06)",
+                      background: C.goldFaint,
                       border: `1px solid ${C.borderGold}`,
                       borderRadius: 8,
+                      color: C.inkMid,
                       fontSize: 12.5,
-                      lineHeight: 1.5,
-                      fontFamily: "'Crimson Pro', Georgia, serif",
                     }}
                   >
                     <summary
                       style={{
                         cursor: "pointer",
-                        fontWeight: 600,
                         color: C.gold,
+                        fontWeight: 700,
                         userSelect: "none",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        outline: "none",
                       }}
                     >
-                      <span>💭</span>
-                      <span>{msg.isThinking ? "Thinking in progress..." : "View reasoning process"}</span>
-                      {msg.isThinking && (
-                        <span style={{ display: "inline-block", animation: "spin 1.2s linear infinite", fontSize: 11 }}>⟳</span>
-                      )}
+                      Model thinking
                     </summary>
                     <div
                       style={{
                         marginTop: 8,
                         paddingTop: 8,
-                        borderTop: "1px dashed rgba(180,160,120,0.3)",
-                        color: C.inkMid,
+                        borderTop: `1px solid ${C.border}`,
                         whiteSpace: "pre-wrap",
-                        maxHeight: 220,
-                        overflowY: "auto",
-                        fontSize: 12,
-                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                        background: "rgba(0,0,0,0.02)",
-                        borderRadius: 4,
-                        padding: "6px 8px",
+                        lineHeight: 1.5,
                       }}
                     >
                       {msg.thinking}
@@ -715,15 +749,45 @@ export default function Chat() {
 
                 {/* ── Grounded Answer (Shows permanently) ── */}
                 {msg.content ? (
-                  <div style={{ whiteSpace: "pre-wrap" }}>
-                    {stripThinking(msg.content)}
+                  <div
+                    style={{
+                      padding: msg.role === "assistant" ? "14px 16px" : 0,
+                      background: msg.role === "assistant" ? C.white : "transparent",
+                      border: msg.role === "assistant" ? `1px solid ${C.border}` : "none",
+                      borderRadius: 8,
+                      color: msg.role === "assistant" ? C.inkDark : C.cream,
+                      fontSize: msg.role === "assistant" ? 15.5 : 14,
+                      lineHeight: 1.75,
+                    }}
+                  >
+                    {msg.role === "assistant" && (
+                      <div
+                        style={{
+                          marginBottom: 8,
+                          color: C.gold,
+                          fontFamily: "'Crimson Pro', Georgia, serif",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          letterSpacing: "0.12em",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        Answer
+                      </div>
+                    )}
+                    <FormattedAnswer content={msg.content} />
                   </div>
                 ) : msg.isStreaming ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.inkLight }}>
                     <span style={{ display: "inline-block", animation: "spin 1.2s linear infinite" }}>⟳</span>
-                    {msg.isThinking ? "Analyzing documents & reasoning..." : "Searching documents and generating answer..."}
+                    Searching documents and preparing an answer...
                   </div>
                 ) : null}
+                {msg.streamError && (
+                  <p role="status" style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${C.border}`, color: C.sienna, fontSize: 12 }}>
+                    Response may be incomplete: {msg.streamError}
+                  </p>
+                )}
               </div>
 
               {/* Sources */}

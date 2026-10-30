@@ -30,6 +30,7 @@ from services.llm_models import ModelSpec
     ("Which papers are cited?", "citations"),
     ("Show the table of contents", "sections_list"),
     ("Summarize this paper", "summary"),
+    ("What are the main conclusions?", "summary"),
     ("What are the research gaps?", "gaps"),
     ("What are the main contributions?", "contributions"),
     ("What is future work here?", "future_work"),
@@ -236,6 +237,27 @@ def test_right_sized_prompt_distinguishes_factual_and_complex_queries():
     assert "Descriptive Grounded Answer:" in deep_prompt
 
 
+def test_main_conclusions_prompt_is_structured_and_not_a_factual_lookup():
+    chunks = [{"paper_id": "p1", "title": "Paper A", "text": "Content", "page": 1}]
+    prompt = rag_service._build_rag_prompt("What are the main conclusions?", chunks, intent="summary")
+
+    assert "COMPREHENSIVE / ANALYTICAL QUERY" in prompt
+    assert "supporting takeaways as concise bullets" in prompt
+
+
+def test_untagged_drafting_monologue_is_removed_from_final_answer():
+    raw = (
+        "Alright, let me tackle this user query step by step.\n\n"
+        "The user wants to know the main conclusions from the provided document excerpts.\n\n"
+        "Final version: The paper identifies interpretability as a challenge [Source 1, p. 8]."
+    )
+
+    thinking, answer = llm_service.extract_thinking_and_answer(raw)
+
+    assert "step by step" in thinking
+    assert answer == "The paper identifies interpretability as a challenge [Source 1, p. 8]."
+
+
 def test_page1_block_merging_keeps_authors_intact():
     from ingestion.pdf_parser import ParsedBlock
     from ingestion.structured_chunker import _merge_blocks_for_chunking
@@ -267,4 +289,3 @@ def test_self_check_catches_missed_author():
     draft = "This paper was written by Fabrizio Ruggeri and Michael P. Wiper."
     verified = rag_service._self_check_factual_answer("Who wrote this?", draft, chunks)
     assert "David Ríos Insua" in verified or "David Rios Insua" in verified
-

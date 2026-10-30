@@ -36,7 +36,7 @@ def test_chat_ask_uses_llm_service_and_keeps_response_contract(monkeypatch, chat
     async def fake_call_llm(prompt, *, agent_role, temperature, max_tokens):
         assert agent_role == "chat"
         assert temperature == 0.3
-        assert max_tokens in (1024, 2048)
+        assert max_tokens == 4096
         return "The study supports the approach."
 
     monkeypatch.setattr(rag_service, "semantic_search", fake_search)
@@ -64,7 +64,7 @@ def test_chat_stream_emits_sources_tokens_and_done(monkeypatch, chat_client):
     async def fake_stream(prompt, *, agent_role, temperature, max_tokens):
         assert agent_role == "chat"
         assert temperature == 0.3
-        assert max_tokens in (1024, 2048)
+        assert max_tokens == 4096
         yield "The study "
         yield "supports the approach."
 
@@ -212,3 +212,37 @@ def test_llm_stream_filters_thinking_events(monkeypatch):
     events = asyncio.run(run())
     assert any(evt[0] == "thinking" for evt in events)
     assert any(evt[0] == "token" and "The answer is 42." in evt[1] for evt in events)
+
+
+def test_llm_stream_never_emits_think_block_as_answer():
+    state = {}
+    events = llm_service._filter_stream_events("<think>private reasoning", state)
+    assert not any(event_type == "token" for event_type, _ in events)
+
+    events.extend(llm_service._filter_stream_events("</think>Grounded answer.", state))
+    answer = "".join(text for event_type, text in events if event_type == "token")
+    thinking = "".join(text for event_type, text in events if event_type == "thinking")
+
+    assert thinking == "private reasoning"
+    assert answer == "Grounded answer."
+
+
+def test_llm_stream_filters_chunked_untagged_preamble_and_keeps_final_answer():
+    state = {}
+    chunks = [
+        "Alri",
+        "ght, let me tackle this user query step by step.\n\n"
+        "I should review the excerpts first.\n\nFinal ver",
+        "sion: **Main conclusion**\n- The paper identifies interpretability as a challenge [Source 1].",
+    ]
+    events = [
+        event
+        for chunk in chunks
+        for event in llm_service._filter_stream_events(chunk, state)
+    ]
+    events.extend(llm_service._filter_stream_events("", state, final=True))
+
+    answer = "".join(text for event_type, text in events if event_type == "token")
+    thinking = "".join(text for event_type, text in events if event_type == "thinking")
+    assert "Alright" in thinking
+    assert answer == "**Main conclusion**\n- The paper identifies interpretability as a challenge [Source 1]."

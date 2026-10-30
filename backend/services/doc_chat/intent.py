@@ -73,6 +73,8 @@ _PATTERNS: list[tuple[str, list[str]]] = [
         r"\bsummari[sz]e\b",
         r"\boverview of (?:the|this)\b",
         r"\btl;?dr\b",
+        r"\b(?:main|key)\s+conclusions?\b",
+        r"\bconclusions?\s+of (?:the|this)\b",
     ]),
 ]
 

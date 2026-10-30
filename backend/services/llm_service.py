@@ -94,6 +94,39 @@ def _request_payload(
 
 _THINK_OPEN_TAGS = ["<think>", "<thought>", "<thinking>"]
 _THINK_CLOSE_TAGS = ["</think>", "</thought>", "</thinking>"]
+_UNTAGGED_REASONING_PREFIXES = (
+    "alright, let me tackle this user query",
+    "alright let me tackle this user query",
+    "we are given a user question",
+    "first, i need to",
+    "first i need to",
+    "looking at the document excerpts",
+    "let me check the document",
+    "let's analyze the question",
+    "the user is asking",
+    "the user wants to know",
+    "important: the user is asking",
+    "the user's question is",
+    "given the strict rules",
+    "let me draft",
+)
+_UNTAGGED_ANSWER_MARKER = re.compile(
+    r"(?:^|\n+)\s*(?:(?:Concise|Descriptive)\s+Grounded\s+Answer|"
+    r"Final(?:\s+(?:draft|version|answer))?|Answer)\s*:\s*",
+    re.IGNORECASE,
+)
+
+
+def _find_untagged_answer_start(text: str) -> re.Match | None:
+    marker = _UNTAGGED_ANSWER_MARKER.search(text)
+    if marker:
+        return marker
+    return re.search(
+        r"\n{2,}(?=(?:#{1,3}\s|\*\*|Based on\b|In summary\b|According to\b|"
+        r"The answer is\b|The main (?:conclusions|findings)\b))",
+        text,
+        flags=re.IGNORECASE,
+    )
 
 
 def extract_thinking_and_answer(text: str) -> tuple[str, str]:
@@ -125,27 +158,22 @@ def extract_thinking_and_answer(text: str) -> tuple[str, str]:
     ).strip()
     cleaned = re.sub(r"</(?:think|thought|thinking)>", "", cleaned, flags=re.IGNORECASE).strip()
 
-    # 2. Extract untagged reasoning preamble if answer marker is present
-    marker_match = re.search(
-        r"(?:^|\n+)(?:(?:Concise|Descriptive)\s+Grounded\s+Answer:|(?:\*\*|\#\#)?\s*Answer:?)\s*",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-    if marker_match and marker_match.start() > 0:
+    # 2. Extract untagged reasoning preamble if an answer marker is present
+    has_reasoning_preamble = cleaned.lstrip().lower().startswith(_UNTAGGED_REASONING_PREFIXES)
+    marker_match = _find_untagged_answer_start(cleaned) if has_reasoning_preamble else None
+    if marker_match and marker_match.start() > 0 and has_reasoning_preamble:
         preamble = cleaned[:marker_match.start()].strip()
         if preamble:
             thinking_parts.append(preamble)
         cleaned = cleaned[marker_match.end():].strip()
-    else:
-        # 3. Check for obvious reasoning preamble at the start
-        preamble_match = re.match(
-            r"^(?:We are given a user question|First,? I need to|Looking at the document excerpts|Let me check the document|Let's analyze the question|The user is asking)[\s\S]*?\n\n",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
-        if preamble_match:
-            thinking_parts.append(preamble_match.group(0).strip())
-            cleaned = cleaned[preamble_match.end():].strip()
+    elif has_reasoning_preamble:
+        answer_start = _find_untagged_answer_start(cleaned)
+        if answer_start:
+            thinking_parts.append(cleaned[:answer_start.start()].strip())
+            cleaned = cleaned[answer_start.end():].strip()
+        else:
+            thinking_parts.append(cleaned)
+            cleaned = ""
 
     thinking = "\n\n".join(thinking_parts).strip()
     return thinking, cleaned
@@ -221,32 +249,25 @@ def _filter_stream_events(content: str, state: dict, *, final: bool = False) -> 
 
         # 3. Detect untagged reasoning preamble at the start of response
         if state.get("in_preamble", None) is None:
-            stripped = data.strip().lower()
-            if any(stripped.startswith(p) for p in (
-                "we are given a user question",
-                "first, i need to",
-                "first i need to",
-                "looking at the document excerpts",
-                "let me check the document",
-                "let's analyze the question",
-                "the user is asking",
-            )):
+            stripped = data.lstrip().lower()
+            if stripped.startswith(_UNTAGGED_REASONING_PREFIXES):
                 state["in_preamble"] = True
+            elif any(prefix.startswith(stripped) for prefix in _UNTAGGED_REASONING_PREFIXES) and not final:
+                state["pending"] = data
+                return events
             else:
                 state["in_preamble"] = False
+            state["pending"] = ""
 
         if state.get("in_preamble", False):
-            marker_match = re.search(
-                r"(?:(?:Concise|Descriptive)\s+Grounded\s+Answer:|(?:\*\*|\#\#)?\s*Answer:?)\s*",
-                data,
-                flags=re.IGNORECASE,
-            )
+            marker_match = _find_untagged_answer_start(data)
             if marker_match:
                 preamble_text = data[:marker_match.start()]
                 if preamble_text:
                     events.append(("thinking", preamble_text))
                 data = data[marker_match.end():]
                 state["in_preamble"] = False
+                state["pending"] = ""
                 continue
             else:
                 if final:
@@ -254,7 +275,9 @@ def _filter_stream_events(content: str, state: dict, *, final: bool = False) -> 
                     state["pending"] = ""
                     return events
                 suffix_length = max((_partial_tag_suffix_length(data, m) for m in (
-                    "concise grounded answer:", "descriptive grounded answer:", "answer:"
+                    "concise grounded answer:", "descriptive grounded answer:",
+                    "final:", "final draft:", "final version:", "final answer:",
+                    "answer:"
                 )), default=0)
                 emit_len = len(data) - suffix_length
                 if emit_len > 0:
@@ -518,6 +541,7 @@ async def call_llm_stream(
             context_limit=context_limit,
         )
         think_state: dict = {}
+        response_limit_reached = False
         try:
             async with _semaphore(spec):
                 async with httpx.AsyncClient(timeout=_request_timeout(_read_timeout_for_role(agent_role))) as client:
@@ -549,6 +573,7 @@ async def call_llm_stream(
                                         elif ev_type == "token":
                                             yield text
                             if chunk.get("done"):
+                                response_limit_reached = chunk.get("done_reason") == "length"
                                 break
                         remaining_events = _filter_stream_events("", think_state, final=True)
                         for ev_type, text in remaining_events:
@@ -558,6 +583,11 @@ async def call_llm_stream(
                                     yield (ev_type, text)
                                 elif ev_type == "token":
                                     yield text
+            if response_limit_reached:
+                raise RuntimeError(
+                    "The model reached its response limit before finishing. "
+                    "Please ask a narrower question."
+                )
             return
         except Exception as error:
             if yielded_content:
